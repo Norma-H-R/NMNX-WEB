@@ -1,0 +1,308 @@
+/* ==========================================================================
+   南门拈星 · 全局样式与设计变量
+   配色思路：深空底 + 星白文字 + 青紫渐变点缀 + 金色高光
+   ========================================================================== */
+
+:root {
+  --bg: #06070d;
+  --bg-soft: #0a0c15;
+  --bg-raise: #0e1120;
+
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.14);
+
+  --text: #e9ecf5;
+  --text-dim: #a9b1c6;
+  --muted: #7c849b;
+
+  --cyan: #6ee7ff;
+  --violet: #a78bfa;
+  --gold: #f2d18d;
+
+  --grad: linear-gradient(120deg, var(--cyan), var(--violet));
+
+  --maxw: 1180px;
+  --gutter: clamp(20px, 5vw, 56px);
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB',
+    system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+body.is-locked {
+  overflow: hidden;
+}
+
+::selection {
+  background: rgba(110, 231, 255, 0.26);
+  color: #fff;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: #232838;
+  border-radius: 99px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #333a4f;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   布局
+   -------------------------------------------------------------------------- */
+
+.container {
+  width: 100%;
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.section {
+  position: relative;
+  padding: clamp(96px, 15vh, 190px) 0;
+}
+
+/* --------------------------------------------------------------------------
+   排版
+   -------------------------------------------------------------------------- */
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.eyebrow::before {
+  content: '';
+  width: 26px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan));
+}
+
+.title {
+  font-size: clamp(28px, 3.6vw, 50px);
+  font-weight: 500;
+  line-height: 1.24;
+  letter-spacing: -0.015em;
+  margin-top: 22px;
+}
+
+.title em {
+  font-style: normal;
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lead {
+  margin-top: 22px;
+  max-width: 56ch;
+  font-size: clamp(15px, 1.1vw, 17px);
+  line-height: 1.95;
+  color: var(--text-dim);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.gold {
+  color: var(--gold);
+}
+
+/* --------------------------------------------------------------------------
+   通用组件
+   -------------------------------------------------------------------------- */
+
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.4s var(--ease), transform 0.4s var(--ease);
+}
+
+.btn span {
+  position: relative;
+  z-index: 1;
+}
+
+.btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--grad);
+  opacity: 0;
+  transition: opacity 0.45s var(--ease);
+}
+
+.btn:hover {
+  border-color: transparent;
+  transform: translateY(-2px);
+}
+
+.btn:hover::before {
+  opacity: 0.16;
+}
+
+.btn--primary {
+  border-color: transparent;
+  color: #06070d;
+  background: var(--grad);
+  font-weight: 500;
+}
+
+.btn--primary::before {
+  background: #fff;
+}
+
+.btn--primary:hover::before {
+  opacity: 0.14;
+}
+
+/* 会跟随鼠标的柔光卡片，坐标由 JS 写入 --mx / --my */
+.card {
+  position: relative;
+  padding: 34px 32px 36px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.008));
+  overflow: hidden;
+  transition: border-color 0.5s var(--ease), transform 0.5s var(--ease);
+}
+
+.card::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: radial-gradient(
+    340px circle at var(--mx, 50%) var(--my, 0%),
+    rgba(110, 231, 255, 0.13),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity 0.5s var(--ease);
+  pointer-events: none;
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+  transform: translateY(-4px);
+}
+
+.card:hover::after {
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------------------
+   滚动入场：由 useReveal 指令统一控制
+   -------------------------------------------------------------------------- */
+
+[data-reveal] {
+  will-change: transform, opacity;
+}
+
+/* 动效关闭时，元素保持可见 */
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   质感层：噪点 + 顶部光晕
+   -------------------------------------------------------------------------- */
+
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.032;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.aurora {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60vw 46vw at 78% -6%, rgba(167, 139, 250, 0.16), transparent 60%),
+    radial-gradient(54vw 40vw at 12% 8%, rgba(110, 231, 255, 0.11), transparent 62%);
+}

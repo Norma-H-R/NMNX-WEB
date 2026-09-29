@@ -1,0 +1,20 @@
+{
+  "name": "nmnx-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "南门拈星 · 官方网站",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "gsap": "^3.15.0",
+    "vue": "^3.5.43"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
+    "vite": "^8.3.1"
+  }
+}
