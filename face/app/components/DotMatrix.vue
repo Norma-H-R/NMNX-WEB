@@ -39,17 +39,21 @@ const THRESHOLD = 0.55
 const PEAK = 1.45 // 归一化上限：达到这个密度就完全不透明
 const GAMMA = 0.8 // 亮度曲线，<1 让中间调提亮一点
 
-const MORPH_PERIOD = 26 // 两份密度场交叉淡入淡出的周期（秒）
+const MORPH_PERIOD = 11 // 两份密度场交叉淡入淡出的周期（秒），越小变形越明显
 
-// 鼠标交互
-const PUSH_X = 22 // 光标把云团推开的最大水平距离
-const PUSH_Y = 26 // 光标把云团推开的最大垂直距离
-const REACH = 200 // 影响半径（像素）
-const BOOST = 0.45 // 光标附近的额外亮度
+// 鼠标交互：光标只让点**变色**（向青色靠拢），不产生位移（凸起）
+const REACH = 220 // 变色影响半径（像素）
+const HOVER = 0.9 // 光标附近的变青强度上限
 
-// 颜色与 main.css 里的设计变量保持一致
-const RGB_DOT = '226, 236, 245' // 接近 --text
-const RGB_ACCENT = '110, 231, 255' // = --cyan
+// 环境变化（让云团"活"起来，而不是基本冻结）
+const TWINKLE = 0.2 // 单个点闪烁的幅度（0 就完全不闪）
+const TWINKLE_SPEED = 1.4 // 闪烁速度
+const DRIFT_X = 22 // 整团云缓慢水平漂移的幅度（像素）
+const DRIFT_Y = 10 // 整团云缓慢垂直漂移的幅度（像素）
+
+// 颜色与 main.css 里的设计变量保持一致（数组便于做颜色插值）
+const RGB_DOT = [226, 236, 245] // 接近 --text
+const RGB_ACCENT = [110, 231, 255] // = --cyan
 const ACCENT_AT = 0.8 // 归一化亮度高于此值才转强调色，于是青色只出现在最浓的核里
 
 // ---------------------------- 状态 ----------------------------
@@ -68,10 +72,6 @@ let jitter = null
 let startedAt = 0
 
 const pointer = {
-  tx: 0,
-  ty: 0,
-  x: 0,
-  y: 0,
   cx: -1e4,
   cy: -1e4,
   ncx: -1e4,
@@ -216,17 +216,16 @@ function onResize() {
 }
 
 function draw(t) {
-  pointer.x += (pointer.tx - pointer.x) * 0.045
-  pointer.y += (pointer.ty - pointer.y) * 0.045
   pointer.cx += (pointer.ncx - pointer.cx) * 0.15
   pointer.cy += (pointer.ncy - pointer.cy) * 0.15
 
-  const ox = pointer.x * 16
-  const oy = pointer.y * 9
+  // 整团云缓慢漂移（环境变化，不跟鼠标）
+  const ox = Math.sin(t * 0.05) * DRIFT_X
+  const oy = Math.cos(t * 0.038) * DRIFT_Y
 
   ctx.clearRect(0, 0, w, h)
 
-  // 两份场来回交叉，0 → 1 → 0，云团因此缓慢变形而不是整体平移
+  // 两份场来回交叉，0 → 1 → 0，云团因此缓慢变形
   const morph = 0.5 - 0.5 * Math.cos((t / MORPH_PERIOD) * Math.PI * 2)
 
   const live = pointer.active
@@ -245,40 +244,46 @@ function draw(t) {
       if (d <= THRESHOLD) continue
 
       const x = c * SPACING
+      const px = x + ox
+      const py = y + oy
 
-      let dx = x + ox
-      let dy = y + oy
-      let boost = 0
+      // 亮度：阈值→上限线性映射 + gamma + 单点闪烁 + 尺寸微差
+      let lit = (d - THRESHOLD) * inv
+      if (lit > 1) lit = 1
+      lit = Math.pow(lit, GAMMA)
+      // 单点闪烁：每个点有自己的明暗节奏，云才不是"冻结"的
+      lit *= (1 - TWINKLE) + TWINKLE * (0.5 + 0.5 * Math.sin(t * TWINKLE_SPEED + jitter[i] * 43.7))
+      lit *= 0.78 + jitter[i] * 0.3
+      if (lit > 1) lit = 1
 
-      // 光标把云团推开并提亮附近
+      // 基础颜色：浓核转青，其余近白
+      let rr = RGB_DOT[0]
+      let gg = RGB_DOT[1]
+      let bb = RGB_DOT[2]
+      if (lit > ACCENT_AT) {
+        rr = RGB_ACCENT[0]
+        gg = RGB_ACCENT[1]
+        bb = RGB_ACCENT[2]
+      }
+
+      // 光标附近：只**变色**（向青色靠拢），点不位移
       if (live) {
-        const rx = dx - pointer.cx
-        const ry = dy - pointer.cy
+        const rx = px - pointer.cx
+        const ry = py - pointer.cy
         const dist2 = rx * rx + ry * ry
         if (dist2 < reach2) {
           const k = 1 - dist2 / reach2
-          const kk = k * k
-          const invD = 1 / Math.sqrt(dist2 + 1)
-          dx += rx * invD * kk * PUSH_X
-          dy += ry * invD * kk * PUSH_Y
-          boost = kk * BOOST
+          const m = k * k * HOVER
+          rr += (RGB_ACCENT[0] - rr) * m
+          gg += (RGB_ACCENT[1] - gg) * m
+          bb += (RGB_ACCENT[2] - bb) * m
         }
       }
 
-      // 归一化亮度：阈值到一个上限之间线性映射，再做一次 gamma 提亮中间调
-      let lit = (d - THRESHOLD) * inv
-      if (lit > 1) lit = 1
-      lit = Math.pow(lit, GAMMA) * (0.78 + jitter[i] * 0.3) + boost
-      if (lit > 1) lit = 1
-
       const size = DOT - SIZE_JITTER * (1 - lit)
 
-      ctx.fillStyle =
-        lit > ACCENT_AT
-          ? `rgba(${RGB_ACCENT},${lit.toFixed(3)})`
-          : `rgba(${RGB_DOT},${lit.toFixed(3)})`
-
-      ctx.fillRect(dx, dy, size, size)
+      ctx.fillStyle = `rgba(${rr | 0},${gg | 0},${bb | 0},${lit.toFixed(3)})`
+      ctx.fillRect(px, py, size, size)
     }
   }
 }
@@ -289,8 +294,6 @@ function frame(now) {
 }
 
 function onPointerMove(e) {
-  pointer.tx = (e.clientX / w) * 2 - 1
-  pointer.ty = (e.clientY / h) * 2 - 1
   pointer.ncx = e.clientX
   pointer.ncy = e.clientY
   pointer.active = true
@@ -300,8 +303,6 @@ function onPointerLeave() {
   pointer.active = false
   pointer.ncx = -1e4
   pointer.ncy = -1e4
-  pointer.tx = 0
-  pointer.ty = 0
 }
 
 function onVisibility() {
