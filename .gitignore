@@ -1,0 +1,7 @@
+# 仓库根目录的忽略规则。
+# 各子工程（face/、admin/、core/）各自还有自己的 .gitignore，
+# 这里只兜底那些会掉在根目录、又不属于任何子工程的临时产物。
+
+*.log
+.DS_Store
+Thumbs.db

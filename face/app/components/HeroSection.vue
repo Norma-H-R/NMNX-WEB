@@ -1,37 +1,12 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import gsap from 'gsap'
-
+// 入场动画是纯 CSS 的（见下方 style），这里只负责把标题拆成单字。
+// 每个字带一个 --i 序号，CSS 用它算错开延迟。
 const title = '南门拈星'
 const chars = [...title]
-
-const root = ref(null)
-
-onMounted(() => {
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-
-  const q = gsap.utils.selector(root)
-
-  // onMounted 在首次绘制前同步执行，from() 在这里设初值不会闪
-  gsap
-    .timeline({ defaults: { ease: 'power4.out' } })
-    .from(q('.char'), {
-      yPercent: 120,
-      opacity: 0,
-      duration: 1.3,
-      stagger: 0.07,
-    })
-    .from(q('.hero__eyebrow'), { opacity: 0, x: -18, duration: 0.9 }, 0.15)
-    .from(q('.hero__sub'), { opacity: 0, y: 26, duration: 1 }, '-=0.85')
-    .from(q('.hero__cta > *'), { opacity: 0, y: 22, duration: 0.9, stagger: 0.09 }, '-=0.7')
-    .from(q('.hero__rule'), { scaleX: 0, duration: 1.3, ease: 'power2.inOut' }, '-=0.75')
-    .from(q('.hero__meta > *'), { opacity: 0, y: 14, duration: 0.8, stagger: 0.08 }, '-=0.9')
-    .from(q('.hero__cue'), { opacity: 0, y: -14, duration: 0.8 }, '-=0.6')
-})
 </script>
 
 <template>
-  <section id="top" ref="root" class="hero">
+  <section id="top" class="hero">
     <div class="container hero__inner">
       <p class="eyebrow hero__eyebrow">量化交易系统</p>
 
@@ -40,6 +15,7 @@ onMounted(() => {
           v-for="(c, i) in chars"
           :key="i"
           class="char-mask"
+          :style="{ '--i': i }"
           aria-hidden="true"
         ><span class="char">{{ c }}</span></span>
       </h1>
@@ -200,6 +176,166 @@ onMounted(() => {
   }
 }
 
+/* ==========================================================================
+   首屏入场动画 —— 纯 CSS，替代原先的 GSAP timeline
+
+   核心是 animation-fill-mode: backwards：在 delay 期间就应用 from 关键帧，
+   动画结束后元素回归自身样式。三个好处：
+     1. 服务端渲染出的 HTML 一到达浏览器就是"未入场"状态，不需要额外遮罩，不会闪；
+     2. 动画在首次绘制时就开始，不必等 JS 下载 + 注水，用户不会先看到一片空白；
+     3. 播完不残留 transform，按钮 :hover 的位移不会被盖住。
+
+   原地用 GSAP timeline 的相对定位（'-=' 往前挪）算出来的绝对时刻，
+   依次是「起始时刻 / 时长」：
+     .char            i*0.07        / 1.3s  power4.out
+     .hero__eyebrow   0.15          / 0.9s
+     .hero__sub       0.66          / 1.0s
+     .hero__cta > *   0.96 + i*0.09 / 0.9s
+     .hero__rule      1.20          / 1.3s  power2.inOut
+     .hero__meta > *  1.60 + i*0.08 / 0.8s
+     .hero__cue       1.96          / 0.8s
+   ========================================================================== */
+
+.char,
+.hero__eyebrow,
+.hero__sub,
+.hero__cta > *,
+.hero__rule,
+.hero__meta > *,
+.hero__cue {
+  animation-fill-mode: backwards;
+  /* power4.out —— 和全局 --ease 是同一条曲线 */
+  animation-timing-function: var(--ease);
+}
+
+.char {
+  animation-name: hero-slide;
+  animation-duration: 1.3s;
+  animation-delay: calc(var(--i, 0) * 0.07s);
+}
+
+.hero__eyebrow {
+  animation-name: hero-from-left;
+  animation-duration: 0.9s;
+  animation-delay: 0.15s;
+}
+
+/* 上浮距离用变量参数化，避免为几个近似值各写一套关键帧 */
+.hero__sub {
+  --rise: 26px;
+  animation-name: hero-rise;
+  animation-duration: 1s;
+  animation-delay: 0.66s;
+}
+
+.hero__cta > * {
+  --rise: 22px;
+  animation-name: hero-rise;
+  animation-duration: 0.9s;
+}
+.hero__cta > *:nth-child(1) {
+  animation-delay: 0.96s;
+}
+.hero__cta > *:nth-child(2) {
+  animation-delay: 1.05s;
+}
+
+.hero__rule {
+  animation-name: hero-rule;
+  animation-duration: 1.3s;
+  animation-delay: 1.2s;
+  /* power2.inOut */
+  animation-timing-function: cubic-bezier(0.455, 0.03, 0.515, 0.955);
+}
+
+.hero__meta > * {
+  --rise: 14px;
+  animation-name: hero-rise;
+  animation-duration: 0.8s;
+}
+.hero__meta > *:nth-child(1) {
+  animation-delay: 1.6s;
+}
+.hero__meta > *:nth-child(2) {
+  animation-delay: 1.68s;
+}
+.hero__meta > *:nth-child(3) {
+  animation-delay: 1.76s;
+}
+
+.hero__cue {
+  animation-name: hero-cue;
+  animation-duration: 0.8s;
+  animation-delay: 1.96s;
+}
+
+/* 从遮罩下方滑入（对应 GSAP 的 yPercent: 120） */
+@keyframes hero-slide {
+  from {
+    opacity: 0;
+    transform: translateY(120%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes hero-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--rise, 26px));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes hero-rule {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* .hero__cue 自身靠 translateX(-50%) 居中，关键帧里必须把它带上 */
+@keyframes hero-cue {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -14px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .char,
+  .hero__eyebrow,
+  .hero__sub,
+  .hero__cta > *,
+  .hero__rule,
+  .hero__meta > *,
+  .hero__cue {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hero__cue-line {
     animation: none;
@@ -223,23 +359,5 @@ onMounted(() => {
   .hero__title {
     -webkit-text-stroke-width: 1px;
   }
-}
-
-/* SSR 首帧遮罩（类由 nuxt.config 的 head 脚本挂在 <html> 上）。
-   开启服务端渲染后，HTML 一到达浏览器就会先绘制一遍，而入场动画要等 JS
-   加载并注水后才由 GSAP 的 from() 接管。这段时间里首屏元素是"最终可见"
-   状态，会闪一下再被隐藏。
-   这里先按 GSAP 的起始状态把它们压成透明：
-     - 位置差异（translate / scale）靠 opacity: 0 一起遮住，不需要逐个复刻
-     - 等组件挂载、GSAP 写好内联样式后，由 app.vue 摘掉 .js-on，遮罩整体失效
-   没有 JS 时不会挂这个类，内容照常可见。 */
-.js-on .hero__eyebrow,
-.js-on .hero__sub,
-.js-on .hero__cta > *,
-.js-on .hero__meta > *,
-.js-on .hero__cue,
-.js-on .hero__rule,
-.js-on .char {
-  opacity: 0;
 }
 </style>

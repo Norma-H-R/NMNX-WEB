@@ -3,6 +3,31 @@
    配色思路：深空底 + 星白文字 + 青紫渐变点缀 + 金色高光
    ========================================================================== */
 
+/* --------------------------------------------------------------------------
+   字体：Inter，自托管
+
+   不引 Google Fonts —— 那是一个渲染阻塞的跨域样式表，实测光 CSS 就要 600ms+，
+   大陆访问还经常更慢甚至不通。字体文件放在 public/fonts/ 由自己的站点直接出。
+
+   inter-var.woff2 是带 wght 轴的变量字体，300~600 四个字重共用这一个文件。
+   验证过：Google 对这四个字重返回的其实是同一个文件，MD5 完全一致，
+   所以没必要按字重各存一份 —— 那样白白多出 141 KB。
+
+   unicode-range 限定在 latin 子集：Inter 不含汉字，中文会顺着下面的
+   font-family 回退到苹方 / 雅黑，和引 Google Fonts 时的行为一致。
+   -------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300 600;
+  font-display: swap;
+  src: url('/fonts/inter-var.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   --bg: #06070d;
   --bg-soft: #0a0c15;
@@ -268,11 +293,28 @@ img {
 }
 
 /* --------------------------------------------------------------------------
-   滚动入场：由 useReveal 指令统一控制
+   滚动入场：由 v-reveal 指令驱动
+
+   纯 CSS 过渡实现，不依赖任何动画库。指令负责挂 data-reveal 并写入 --rv-*
+   变量，元素进入视口后加 .is-revealed 触发过渡；过渡播完再把属性摘掉，
+   把 transform 交还给 :hover 这类样式（否则 translateY 会被永久占住）。
+
+   注意：data-reveal 只在客户端挂载时才添加，服务端渲染出的 HTML 里没有它。
+   所以禁用 JS 的访客、以及不执行 JS 的爬虫，看到的都是正常可见的内容。
    -------------------------------------------------------------------------- */
 
 [data-reveal] {
+  opacity: 0;
+  transform: translateY(var(--rv-y, 34px));
+  transition:
+    opacity var(--rv-duration, 1.05s) var(--ease) var(--rv-delay, 0s),
+    transform var(--rv-duration, 1.05s) var(--ease) var(--rv-delay, 0s);
   will-change: transform, opacity;
+}
+
+[data-reveal].is-revealed {
+  opacity: 1;
+  transform: none;
 }
 
 /* 动效关闭时，元素保持可见 */
@@ -280,6 +322,7 @@ img {
   [data-reveal] {
     opacity: 1 !important;
     transform: none !important;
+    transition: none !important;
   }
 }
 
@@ -312,10 +355,13 @@ img {
 
    nuxt.config 的 head 里有一段同步脚本会给 <html> 挂上 .js-on，它早于首次绘制
    执行。这里把"要等 JS 来播入场动画"的元素先压成透明，避免服务端渲染出来的
-   内容先可见、再被 GSAP 隐藏造成的闪烁。
+   内容先可见、再被指令挂上 data-reveal 造成闪烁。
+
+   只针对滚动入场的元素（.rv）。首屏 Hero 不在这里 —— 它是纯 CSS animation，
+   靠 animation-fill-mode: backwards 自己就能保持起始态，不需要遮罩。
 
    没有 JS 时不会有这个类，内容照常可见 —— 禁用 JS 的访客和执行 JS 能力较弱的
-   爬虫都能正常读到内容。等各组件挂载写好内联样式后，由 app.vue 统一摘类。
+   爬虫都能正常读到内容。等指令挂好 data-reveal 后，由 app.vue 统一摘类。
    -------------------------------------------------------------------------- */
 
 .js-on .rv {

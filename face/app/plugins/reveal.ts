@@ -1,5 +1,3 @@
-import gsap from 'gsap'
-
 /**
  * v-reveal —— 滚动进入视口时做一次入场动画。
  *
@@ -8,13 +6,18 @@ import gsap from 'gsap'
  *   v-reveal="{ selector: '.item', stagger: .08 }"
  *                                        容器进入时，子元素依次错开入场
  *
- * 只播一次，播完即解除观察；prefers-reduced-motion 下直接显示不做动画。
+ * 纯 CSS 过渡实现，不引入任何动画库。指令只做三件事：
+ *   1. 挂上 data-reveal，并把 y / duration / delay 写进 --rv-* 变量；
+ *   2. 元素进入视口后加 .is-revealed；
+ *   3. 过渡播完把属性摘干净。
+ * 真正的动画在 main.css 的 [data-reveal] 规则里。
  *
- * 从 Vite 工程平移过来，改动有两处：
- *   1. 指令对象改成在 Nuxt 插件里注册；
- *   2. 不写成 .client.ts —— 服务端渲染时 Vue 依然会去找指令的 getSSRProps，
- *      如果指令压根没注册，拿到 undefined 就会把整页渲染搞崩。所以这里用通用
- *      插件，只在真正碰浏览器 API 的地方做隔离（mounted 只会在客户端执行）。
+ * 第 3 步不能省：留着 transform 会永久占住这个属性，卡片 :hover 的位移就没了。
+ *
+ * 只播一次，播完即解除观察；prefers-reduced-motion 下不做动画、直接呈现。
+ *
+ * 服务端渲染安全：写成通用插件而不是 .client.ts —— SSR 渲染时会调用指令的
+ * getSSRProps，指令没注册会让整页 500。浏览器 API 全部收在 mounted 里。
  */
 
 const DEFAULTS = { y: 34, delay: 0, duration: 1.05, stagger: 0.08, selector: null }
@@ -44,7 +47,7 @@ function ensureObserver() {
 
 export default defineNuxtPlugin((nuxtApp) => {
   nuxtApp.vueApp.directive('reveal', {
-    // 服务端渲染阶段不做任何事，但必须声明：SSR 会调用它来收集指令产生的属性
+    // 服务端渲染阶段不做任何事，但必须声明：SSR 会调它来收集指令产生的属性
     getSSRProps() {
       return {}
     },
@@ -52,33 +55,46 @@ export default defineNuxtPlugin((nuxtApp) => {
     mounted(el: HTMLElement, binding) {
       // 能走到这里说明已经在客户端，浏览器 API 可以放心用
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
       const opts = { ...DEFAULTS, ...(binding.value || {}) }
 
-      const targets = opts.selector
-        ? Array.from(el.querySelectorAll(opts.selector))
-        : [el]
+      const targets = (
+        opts.selector ? Array.from(el.querySelectorAll(opts.selector)) : [el]
+      ) as HTMLElement[]
 
       if (!targets.length) return
 
+      let lastEnd = opts.duration
+
+      targets.forEach((t, i) => {
+        const delay = opts.delay + i * opts.stagger
+        lastEnd = Math.max(lastEnd, delay + opts.duration)
+
+        t.setAttribute('data-reveal', '')
+        t.style.setProperty('--rv-y', `${opts.y}px`)
+        t.style.setProperty('--rv-duration', `${opts.duration}s`)
+        t.style.setProperty('--rv-delay', `${delay}s`)
+      })
+
+      const teardown = () => {
+        for (const t of targets) {
+          t.removeAttribute('data-reveal')
+          t.classList.remove('is-revealed')
+          t.style.removeProperty('--rv-y')
+          t.style.removeProperty('--rv-duration')
+          t.style.removeProperty('--rv-delay')
+        }
+      }
+
       if (reduced) {
-        gsap.set(targets, { opacity: 1, y: 0 })
+        // 不做动画，也不留任何痕迹
+        teardown()
         return
       }
 
-      gsap.set(targets, { opacity: 0, y: opts.y })
-
       pending.set(el, () => {
-        gsap.to(targets, {
-          opacity: 1,
-          y: 0,
-          duration: opts.duration,
-          delay: opts.delay,
-          stagger: opts.stagger,
-          ease: 'power3.out',
-          // 收尾清掉 transform，避免和 hover 的 transform 打架
-          clearProps: 'transform',
-        })
+        for (const t of targets) t.classList.add('is-revealed')
+        // 等最后一个元素播完再清理，把 transform 让回给 :hover
+        window.setTimeout(teardown, lastEnd * 1000 + 80)
       })
 
       ensureObserver().observe(el)

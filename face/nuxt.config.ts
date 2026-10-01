@@ -21,25 +21,33 @@ export default defineNuxtConfig({
       ],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
-        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-        { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: 'anonymous' },
+
+        // 字体走自托管（见 main.css 的 @font-face），这里预加载那一个变量字体文件，
+        // 避免首屏文字先以回退字体显示、再换成 Inter 时抖一下。
+        // 字体属于 CORS 资源，crossorigin 必须带，否则浏览器会重复下载。
         {
-          rel: 'stylesheet',
-          href: 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap',
+          rel: 'preload',
+          href: '/fonts/inter-var.woff2',
+          as: 'font',
+          type: 'font/woff2',
+          crossorigin: 'anonymous',
         },
       ],
       // SSR 首帧遮罩。
       //
-      // 站点开了服务端渲染后，HTML 一到浏览器就会先画一遍。而首屏的 GSAP 入场
-      // 动画要等 JS 加载 + 注水后才跑，中间这段时间元素是"最终可见"状态，
-      // 用户会看到内容先出现、再被隐藏、再滑入 —— 也就是闪烁。
+      // 站点开了服务端渲染后，HTML 一到浏览器就会先画一遍。而滚动入场的
+      // v-reveal 要等 JS 加载 + 注水后才接管，中间这段时间元素是"最终可见"
+      // 状态，用户会看到内容先出现、再被隐藏、再滑入 —— 也就是闪烁。
       //
       // 这里在 <head> 里同步加一个类（此刻 body 还没解析，早于首次绘制），
-      // 由 CSS 把首屏动效元素压成透明；等子组件挂载并写好内联样式后，
+      // 由 CSS 把滚动入场的元素压成透明；等指令挂好 data-reveal 之后，
       // 再在 app.vue 里统一摘掉这个类。
       //
-      // 注意：不加类就等于没有遮罩。所以禁用 JS 时内容照常可见，
+      // 不加类就等于没有遮罩。所以禁用 JS 时内容照常可见，
       // 不执行 JS 的爬虫也能正常读到首屏文本。
+      //
+      // 首屏 Hero 的入场动画不依赖这个类 —— 它是纯 CSS animation，
+      // 靠 animation-fill-mode: backwards 在 delay 期间就保持起始态。
       script: [{ innerHTML: "document.documentElement.classList.add('js-on')" }],
     },
   },
