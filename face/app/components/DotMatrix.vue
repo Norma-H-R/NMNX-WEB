@@ -2,59 +2,51 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 /**
- * 点阵云团背景。
+ * 点阵云团背景（对齐 trae.ai 的真实实现，扒其 GLSL 反推）。
  *
- * 参考 trae.ai：纯黑底上是一大片由小方块聚成的**云雾团**，占据视口上方约五成，
- * 有浓核、有空洞、有游离散点，浓密处泛青，整体缓慢变形。
- * 观感上很像把一张低分辨率位图放大 —— 其实就是「把一个平滑的密度场做阈值化」。
+ * 它的点阵不是"画很多点"，而是三层合成：
+ *   1. 底层一片**流动的流体噪声**：fbm + 域扭曲（domain warp），时间只做垂直漂移；
+ *   2. 中层**像素化**：把流体切成网格方块，每块的采样点被一个静态流场推开；
+ *   3. 上层**阈值 + 随机上色**：亮度低于（带每块随机抖动的）阈值就出背景，
+ *      高于阈值就出点；颜色按每块随机数在 白/强调色 之间选。
+ * 鼠标只做**颜色交换**，不影响流动、不产生位移（其源码注释明确写了这点）。
  *
- * 和第一版的根本区别：第一版用的是一维山脊函数（每列一个高度），
- * 出来是一条细波浪带；这里是二维噪声密度场，才会成"团"。
- *
- * 调参上最关键的一条：**大尺度分布要压过细节噪声**，否则密度全挤在均值附近，
- * 云就糊成一整片灰，既没有浓核也没有空洞。所以下面 mac 占 0.74 而 det 只占 0.26。
- *
- * 性能设计（重点，二维逐点采样每帧几万次会很慢）：
- *   - 密度场只在 resize 时算一次，存进 Float32Array；
- *   - 同时算两份场（不同噪声偏移），帧间交叉淡入淡出，云团就会缓慢变形，
- *     每帧的工作量只剩一次线性插值；
- *   - 逐点哈希用整数位运算（Math.imul），不碰 Math.sin，比三角函数快得多；
- *   - 每帧先比阈值再决定要不要画，实际绘制的点只有全部格子的一部分。
+ * Canvas 2D 版等价实现：
+ *   - DF：一张**平铺（周期 P）**的 fbm 密度场，缩放时算一次，存 Float32Array；
+ *   - warpX/warpY：静态流场扭曲（相干，不随帧变），缩放时算一次；
+ *   - 每帧只做：采样坐标 = 网格 + 流场扭曲 + 垂直滚动(phase)，对 DF 双线性采样，
+ *     再比阈值 + 上色。每帧最重的工作就是一次双线性查表，很轻。
  */
 
 // ---------------------------- 可调参数 ----------------------------
 
 const SPACING = 6 // 格子间距（CSS 像素）
-const DOT = 5 // 方块边长，比间距小一点，方块之间会留出暗缝，才有"点阵"感
-const SIZE_JITTER = 1.3 // 方块尺寸的随机浮动，打散整齐感
+const DOT = 5 // 方块边长，比间距小一点，方块之间留暗缝才有"点阵"感
+const SIZE_JITTER = 1.3 // 方块尺寸随机浮动
 
 const CLOUD_Y = 0.38 // 云团中心在视口高度上的位置
 const CLOUD_SPREAD = 0.34 // 云团的垂直扩散半径（相对视口高度）
-const FIELD_X = 150 // 细节噪声在 x 方向的尺度（越大，云块越宽）
-const FIELD_Y = 62 // 细节噪声在 y 方向的尺度（比 x 小 → 云块横向拉长）
 
-// 阈值和上限是照着**实测的密度分布**定的（把密度场跑出来统计分位数再挑），
-// 不是拍脑袋。改上面的噪声尺度或权重之后，这两个数要重新对一遍。
+// 流动（核心，之前漏掉的一环）
+const FLOW_SPEED = 1.4 // 垂直流动速度（场单元/秒）
+const WARP_X = 3.0 // 水平流场扭曲幅度（场单元）
+const WARP_Y = 5.0 // 垂直流场扭曲幅度（场单元，更大 → 更偏纵向流动）
+
+const P = 256 // 平铺密度场的周期（场单元）
+
+// 阈值与亮度
 const THRESHOLD = 0.55
-const PEAK = 1.45 // 归一化上限：达到这个密度就完全不透明
-const GAMMA = 0.8 // 亮度曲线，<1 让中间调提亮一点
+const GAMMA = 0.8
+const JITTER_RANGE = 0.14 // 每点阈值随机抖动，制造噪点边缘与空洞
 
-const MORPH_PERIOD = 11 // 两份密度场交叉淡入淡出的周期（秒），越小变形越明显
+// 鼠标：只变色，不位移
+const REACH = 220
+const HOVER = 0.9
 
-// 鼠标交互：光标只让点**变色**（向青色靠拢），不产生位移（凸起）
-const REACH = 220 // 变色影响半径（像素）
-const HOVER = 0.9 // 光标附近的变青强度上限
-
-// 环境变化（让云团"活"起来，而不是基本冻结）
-const TWINKLE = 0.2 // 单个点闪烁的幅度（0 就完全不闪）
-const TWINKLE_SPEED = 1.4 // 闪烁速度
-const DRIFT_X = 22 // 整团云缓慢水平漂移的幅度（像素）
-const DRIFT_Y = 10 // 整团云缓慢垂直漂移的幅度（像素）
-
-// 颜色与 main.css 里的设计变量保持一致（数组便于做颜色插值）
+// 颜色与 main.css 里的设计变量保持一致（数组便于插值）
 const RGB_DOT = [226, 236, 245] // 接近 --text
 const RGB_ACCENT = [110, 231, 255] // = --cyan
-const ACCENT_AT = 0.8 // 归一化亮度高于此值才转强调色，于是青色只出现在最浓的核里
+const ACCENT_AT = 0.8 // 亮度高于此值转强调色，青色只出现在最浓的核里
 
 // ---------------------------- 状态 ----------------------------
 
@@ -64,11 +56,14 @@ let ctx = null
 let raf = 0
 let w = 0
 let h = 0
+let dpr = 1
 let cols = 0
 let rows = 0
-let fieldA = null
-let fieldB = null
-let jitter = null
+let DF = null // 平铺密度场 P×P
+let warpX = null // 静态水平流场扭曲
+let warpY = null // 静态垂直流场扭曲
+let jitter = null // 每点 0~1 随机（阈值抖动 + 尺寸）
+let envRow = null // 每行垂直包络
 let startedAt = 0
 
 const pointer = {
@@ -81,7 +76,7 @@ const pointer = {
 
 // ---------------------------- 噪声 ----------------------------
 
-// 整数哈希。用 Math.imul 做 32 位乘法，避免 JS 数值精度问题。
+// 整数哈希，Math.imul 做 32 位乘法避免精度问题
 function hash2(ix, iy, seed) {
   let n = Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(seed, 1442695041)
   n = Math.imul(n ^ (n >>> 13), 1274126177)
@@ -89,19 +84,20 @@ function hash2(ix, iy, seed) {
   return (n >>> 0) / 4294967296
 }
 
+const smooth = (f) => f * f * (3 - 2 * f)
+
+// 普通值噪声（非周期），给流场用
 function noise2(x, y, seed) {
   const ix = Math.floor(x)
   const iy = Math.floor(y)
   const fx = x - ix
   const fy = y - iy
-  const ux = fx * fx * (3 - 2 * fx)
-  const uy = fy * fy * (3 - 2 * fy)
-
+  const ux = smooth(fx)
+  const uy = smooth(fy)
   const a = hash2(ix, iy, seed)
   const b = hash2(ix + 1, iy, seed)
   const c = hash2(ix, iy + 1, seed)
   const d = hash2(ix + 1, iy + 1, seed)
-
   const top = a + (b - a) * ux
   const bot = c + (d - c) * ux
   return top + (bot - top) * uy
@@ -115,56 +111,71 @@ function fbm2(x, y, seed) {
   )
 }
 
-/** 把 [lo, hi] 线性拉到 0~1，区间外截断。用来放大噪声的对比。 */
+// 周期值噪声：u,v ∈ [0,1)，周期 1。用于构建可平铺的密度场。
+function pnoise1(u, v, seed) {
+  const su = u * P
+  const sv = v * P
+  const ix = Math.floor(su)
+  const iy = Math.floor(sv)
+  const fx = su - ix
+  const fy = sv - iy
+  const ux = smooth(fx)
+  const uy = smooth(fy)
+  const X0 = ix % P
+  const X1 = (ix + 1) % P
+  const Y0 = iy % P
+  const Y1 = (iy + 1) % P
+  const a = hash2(X0, Y0, seed)
+  const b = hash2(X1, Y0, seed)
+  const c = hash2(X0, Y1, seed)
+  const d = hash2(X1, Y1, seed)
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy
+}
+
+// 周期 fbm：频率取整数周期数，保证整个场以 P 为周期无缝平铺
+const K1 = 2
+const K2 = 6
+const K3 = 16
+function pfbm2(px, py, seed) {
+  const u = px / P
+  const v = py / P
+  return (
+    pnoise1(u * K1, v * K1, seed) * 0.5 +
+    pnoise1(u * K2, v * K2, seed + 19) * 0.3 +
+    pnoise1(u * K3, v * K3, seed + 47) * 0.2
+  )
+}
+
+/** 把 [lo, hi] 线性拉到 0~1，区间外截断。放大噪声对比，否则糊成一片灰。 */
 function stretch(v, lo, hi) {
   const t = (v - lo) / (hi - lo)
   return t < 0 ? 0 : t > 1 ? 1 : t
 }
 
-// ---------------------------- 密度场 ----------------------------
+// ---------------------------- 构建 ----------------------------
 
-/**
- * 预计算两份密度场。
- * 每份 = 垂直包络 × 大尺度分布 × 细节纹理，全部烘焙进去，
- * 于是每帧只剩「插值 + 比阈值 + 画方块」。
- */
-function buildFields() {
-  fieldA = new Float32Array(cols * rows)
-  fieldB = new Float32Array(cols * rows)
+function buildDensity() {
+  DF = new Float32Array(P * P)
+  for (let py = 0; py < P; py++) {
+    for (let px = 0; px < P; px++) {
+      // 域扭曲：用一个相干流场把采样点推开，自然挤出浓核与空洞
+      const wx = (fbm2(px * 0.03, py * 0.03, 100) * 2 - 1) * 6
+      const wy = (fbm2(px * 0.03 + 7, py * 0.03 + 3, 101) * 2 - 1) * 6
+      DF[py * P + px] = stretch(pfbm2(px + wx, py + wy, 5), 0.35, 0.65)
+    }
+  }
+}
 
-  const sx = 1 / FIELD_X
-  const sy = 1 / FIELD_Y
-  const cy = h * CLOUD_Y
-  const spread = h * CLOUD_SPREAD
-
+function buildWarp() {
+  warpX = new Float32Array(cols * rows)
+  warpY = new Float32Array(cols * rows)
   for (let r = 0; r < rows; r++) {
-    const y = r * SPACING
-    const ny = (y - cy) / spread
-
-    // 抛物线包络再做一次 smoothstep，边缘消散得自然些
-    const e0 = Math.max(0, 1 - ny * ny * 0.9)
-    const env = e0 * e0 * (3 - 2 * e0)
-    if (env <= 0.002) continue
-
     for (let c = 0; c < cols; c++) {
-      const x = c * SPACING
       const i = r * cols + c
-      const fx = x * sx
-      const fy = y * sy
-
-      // 关键一步：先对噪声做对比拉伸，再相乘。
-      // 原始 fbm 的取值几乎全挤在 0.5 附近（实测 p80 到 p90 只差 0.1），
-      // 不拉伸的话阈值化出来是一整片糊的灰 —— 既没有浓核也没有空洞。
-      // mac 用很窄的区间拉伸 → 结果接近 0/1 两态，云才是「成块」的，
-      // 而不是一层渐变的雾；det 的区间宽一些，负责块内部的纹理与空洞。
-      const macA = stretch(fbm2(x * 0.0013 + 11, y * 0.0032 + 5, 17), 0.4, 0.6)
-      const detA = stretch(fbm2(fx, fy, 3), 0.35, 0.65)
-      fieldA[i] = env * (0.05 + 1.42 * macA) * (0.32 + 1.05 * detA)
-
-      // 第二份用不同偏移，交叉淡入淡出时云团会缓慢变形
-      const macB = stretch(fbm2(x * 0.0013 + 41, y * 0.0032 + 23, 53), 0.4, 0.6)
-      const detB = stretch(fbm2(fx + 3.1, fy + 1.7, 29), 0.35, 0.65)
-      fieldB[i] = env * (0.05 + 1.42 * macB) * (0.32 + 1.05 * detB)
+      const fx = c * 0.06
+      const fy = r * 0.08
+      warpX[i] = (fbm2(fx, fy, 21) * 2 - 1) * WARP_X
+      warpY[i] = (fbm2(fx + 9, fy + 3, 22) * 2 - 1) * WARP_Y
     }
   }
 }
@@ -179,24 +190,34 @@ function buildJitter() {
   for (let i = 0; i < jitter.length; i++) jitter[i] = next()
 }
 
-// ---------------------------- 绘制 ----------------------------
+function buildEnvelope() {
+  envRow = new Float32Array(rows)
+  const cy = h * CLOUD_Y
+  const spread = h * CLOUD_SPREAD
+  for (let r = 0; r < rows; r++) {
+    const ny = (r * SPACING - cy) / spread
+    const e0 = Math.max(0, 1 - ny * ny * 0.9)
+    envRow[r] = e0 * e0 * (3 - 2 * e0)
+  }
+}
 
-// resize 要重算密度场，代价不小，做个防抖
+// resize 要重算密度场，代价不小，做防抖
 let resizeTimer = 0
 
 function measureCanvas() {
   const el = canvasRef.value
   if (!el) return false
-
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const ndpr = Math.min(window.devicePixelRatio || 1, 2)
   const nw = el.clientWidth
   const nh = el.clientHeight
-  if (nw === w && nh === h) return false
+  if (nw === w && nh === h && ndpr === dpr) return false
 
   w = nw
   h = nh
+  dpr = ndpr
   el.width = Math.round(w * dpr)
   el.height = Math.round(h * dpr)
+  ctx = el.getContext('2d')
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   cols = Math.ceil(w / SPACING) + 1
@@ -206,8 +227,10 @@ function measureCanvas() {
 
 function rebuild() {
   if (!measureCanvas()) return
-  buildFields()
+  buildDensity()
+  buildWarp()
   buildJitter()
+  buildEnvelope()
 }
 
 function onResize() {
@@ -215,46 +238,62 @@ function onResize() {
   resizeTimer = setTimeout(rebuild, 180)
 }
 
+// ---------------------------- 绘制 ----------------------------
+
 function draw(t) {
   pointer.cx += (pointer.ncx - pointer.cx) * 0.15
   pointer.cy += (pointer.ncy - pointer.cy) * 0.15
 
-  // 整团云缓慢漂移（环境变化，不跟鼠标）
-  const ox = Math.sin(t * 0.05) * DRIFT_X
-  const oy = Math.cos(t * 0.038) * DRIFT_Y
+  // 垂直流动：密度场整体向上滚，配合流场扭曲，像液体一样流
+  const phase = t * FLOW_SPEED
+  const live = pointer.active
+  const reach2 = REACH * REACH
 
   ctx.clearRect(0, 0, w, h)
 
-  // 两份场来回交叉，0 → 1 → 0，云团因此缓慢变形
-  const morph = 0.5 - 0.5 * Math.cos((t / MORPH_PERIOD) * Math.PI * 2)
-
-  const live = pointer.active
-  const reach2 = REACH * REACH
-  const inv = 1 / (PEAK - THRESHOLD)
-
   for (let r = 0; r < rows; r++) {
+    const env = envRow[r]
+    if (env <= 0.002) continue
     const y = r * SPACING
 
     for (let c = 0; c < cols; c++) {
       const i = r * cols + c
 
-      // 两份密度场插值 —— 每帧唯一的"重量级"运算，就这一下
-      const a0 = fieldA[i]
-      const d = a0 + (fieldB[i] - a0) * morph
-      if (d <= THRESHOLD) continue
+      // 采样坐标 = 网格 + 静态流场扭曲 + 垂直滚动
+      let sx = c + warpX[i]
+      let sy = r + warpY[i] + phase
 
-      const x = c * SPACING
-      const px = x + ox
-      const py = y + oy
+      // 归一化到 [0,P) 后对平铺密度场做双线性采样
+      let sx0 = Math.floor(sx)
+      let sy0 = Math.floor(sy)
+      const fx = sx - sx0
+      const fy = sy - sy0
+      sx0 %= P
+      if (sx0 < 0) sx0 += P
+      sy0 %= P
+      if (sy0 < 0) sy0 += P
+      const sx1 = sx0 === P - 1 ? 0 : sx0 + 1
+      const sy1 = sy0 === P - 1 ? 0 : sy0 + 1
+      const a = DF[sy0 * P + sx0]
+      const b = DF[sy0 * P + sx1]
+      const c2 = DF[sy1 * P + sx0]
+      const d2 = DF[sy1 * P + sx1]
+      let density = a + (b - a) * fx + (c2 - a) * fy + (a - b - c2 + d2) * fx * fy
 
-      // 亮度：阈值→上限线性映射 + gamma + 单点闪烁 + 尺寸微差
-      let lit = (d - THRESHOLD) * inv
+      density *= env
+      if (density <= 0) continue
+
+      // 阈值 + 每点随机抖动 → 噪点边缘与空洞
+      const thr = THRESHOLD - jitter[i] * JITTER_RANGE
+      if (density <= thr) continue
+
+      let lit = (density - thr) / (1 - thr)
       if (lit > 1) lit = 1
-      lit = Math.pow(lit, GAMMA)
-      // 单点闪烁：每个点有自己的明暗节奏，云才不是"冻结"的
-      lit *= (1 - TWINKLE) + TWINKLE * (0.5 + 0.5 * Math.sin(t * TWINKLE_SPEED + jitter[i] * 43.7))
-      lit *= 0.78 + jitter[i] * 0.3
+      lit = Math.pow(lit, GAMMA) * (0.78 + jitter[i] * 0.3)
       if (lit > 1) lit = 1
+
+      const px = c * SPACING
+      const py = y
 
       // 基础颜色：浓核转青，其余近白
       let rr = RGB_DOT[0]
@@ -266,13 +305,13 @@ function draw(t) {
         bb = RGB_ACCENT[2]
       }
 
-      // 光标附近：只**变色**（向青色靠拢），点不位移
+      // 光标：只做颜色交换（向青色靠拢），不位移
       if (live) {
         const rx = px - pointer.cx
         const ry = py - pointer.cy
-        const dist2 = rx * rx + ry * ry
-        if (dist2 < reach2) {
-          const k = 1 - dist2 / reach2
+        const d = rx * rx + ry * ry
+        if (d < reach2) {
+          const k = 1 - d / reach2
           const m = k * k * HOVER
           rr += (RGB_ACCENT[0] - rr) * m
           gg += (RGB_ACCENT[1] - gg) * m
@@ -281,7 +320,6 @@ function draw(t) {
       }
 
       const size = DOT - SIZE_JITTER * (1 - lit)
-
       ctx.fillStyle = `rgba(${rr | 0},${gg | 0},${bb | 0},${lit.toFixed(3)})`
       ctx.fillRect(px, py, size, size)
     }
@@ -315,20 +353,11 @@ function onVisibility() {
 }
 
 onMounted(() => {
-  ctx = canvasRef.value.getContext('2d')
-  measureCanvas()
-  buildFields()
-  buildJitter()
+  rebuild()
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
   if (reduced) {
-    // 系统开了"减少动态效果"时只画静态一帧，不起动画循环。
-    // 特意打一行日志：否则在页面上完全看不出是"被降级了"还是"写坏了"。
-    console.info(
-      '[DotMatrix] 检测到 prefers-reduced-motion，背景只渲染静态一帧。' +
-        '想看到动效请在系统里打开动画效果。',
-    )
+    console.info('[DotMatrix] 检测到 prefers-reduced-motion，背景只渲染静态一帧。')
     draw(0)
   } else {
     startedAt = performance.now()
