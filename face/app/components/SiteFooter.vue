@@ -4,33 +4,28 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 /**
  * 页脚。
  *
- * 结构自上而下：
- *   1. 一条突出的 CTA（获取激活码）
- *   2. 信息条：品牌 / 版权 / 导航 / 回到顶部
- *   3. 免责声明（交易类站点必须有，但视觉上要弱化）
- *   4. 压在品牌色上的超大汉字字标，作为整页的收尾
+ * 上半是信息条，下半是压在品牌色上的超大汉字字标。
  *
- * 字标用的是思源黑体 Heavy 的**汉字子集**（只含这四个字，1.3 KB），
- * 见 main.css 里的 @font-face。系统自带的雅黑 Bold 撑不起这个尺度的质感。
+ * 字标沿用参考站的做法：**横向切片位移**（俗称 datamosh / glitch）。
+ * 整行字被切成一条条横向细带，每条带左右错开不同的距离；错开的幅度随时间
+ * 持续变化，同时受鼠标位置影响 —— 光标移过去，附近那些带被推得更狠。
  *
- * 字号不是写死的：挂载后实测一行自然宽度，反推出刚好铺满容器的字号。
- * 换字体、换文案、换视口宽度都不用改数字。汉字每个字的字宽就是 1em，
- * 四个字铺满一行后，行高 1em 正好让色块高度等于字高 —— 所以字是完整显示的，
- * 不做裁切（裁切汉字会切到笔画，看着像坏了）。
+ * 参考站是用 three.js r176 + 着色器画的（我连上它的真实 DOM 才确认：
+ * <canvas data-engine="three.js r176">，外层类名 container_distortion）。
+ * 但这个效果本质上只是「每一行像素整体横移」，
+ * 用 Canvas 2D 的 drawImage 按行切片重绘就能复刻，**不需要引 three.js** ——
+ * 省掉一个几百 KB 的依赖，也符合「能手写就手写」。
  *
- * 交互：
- *   - 光标靠近时，最近的字被抬起、并轻微向外推开，按距离平方衰减；
- *   - 鼠标横向拖拽时整行跟着走，越靠后的字越"跟不上"，松手弹性回中，
- *     拖拽速度转成一点轻微倾斜。
- *   抬起幅度刻意小于汉字自身的内边距，这样字不会被色块边缘切掉。
+ * 做法：先把整行字渲染到一张离屏 canvas，每帧按固定高度逐条 drawImage 回去，
+ * 每条用不同的 x 偏移。带数是 H / 6，1080p 下约 60 次 drawImage / 帧，很轻。
  */
 
 const year = new Date().getFullYear()
 
-// 字标文案。汉字每个字的字宽 = 1em，铺满逻辑是自适应的。
-// ⚠️ 改这里的同时要重新取字体子集（见 main.css 的说明）。
+// 字标文案。汉字字宽 = 1em，四个字恰好铺满一行。
+// ⚠️ 改这里要同步重新取字体子集（见 main.css 的说明）。
 const MARK = '南门拈星'
-const letters = [...MARK]
+const letters = [...MARK] // 仅供无障碍文本使用
 
 const nav = [
   { label: '理念', href: '#about' },
@@ -38,181 +33,221 @@ const nav = [
   { label: '联系', href: '#contact' },
 ]
 
-// ---------------------------- 交互参数 ----------------------------
+// ---------------------------- 可调参数 ----------------------------
 
-const LIFT = 16 // 光标正下方字的最大抬升（px），必须小于汉字自身的内边距
-const PUSH = 11 // 最大横向推开距离（px）
-const REACH = 0.72 // 影响半径，单位是"单个字的宽度"
-const DRAG_MAX = 170 // 拖拽最大位移（px）
-const LAG = 0.14 // 每个字相对前一个的滞后比例
-const MAX_FONT = 460 // 字号上限，避免超宽屏上色块高得离谱
+const BAND = 9 // 切片高度（CSS 像素），越小吃得越细碎
+const BAND_FREQ = 0.3 // 切片方向的相关性：越小，相邻切片越接近、错位越"成块"
+const AMP = 26 // 基础位移幅度（像素）
+const SPEED = 1.1 // 切片的演化速度
+const MOUSE_AMP = 70 // 鼠标带来的额外位移幅度
+const MOUSE_REACH = 150 // 鼠标影响的垂直半径（像素）
+
+const MARK_MAX_W = 1600 // 画布最大宽度，与参考站一致
+const INK = '#06070d' // 字色 = --bg
+const BRAND = '#6ee7ff' // 底色 = --cyan
+
+// ---------------------------- 状态 ----------------------------
 
 const markRef = ref(null)
-const rowRef = ref(null)
-const letterEls = ref([])
+const canvasRef = ref(null)
 
-function bindLetter(i) {
-  return (el) => {
-    letterEls.value[i] = el
+let ctx = null
+let off = null // 离屏画布：整行字就渲染在这里
+let octx = null
+
+let w = 0
+let h = 0
+let dpr = 1
+let raf = 0
+let startedAt = 0
+
+const pointer = { x: -1e4, y: -1e4, ox: -1e4, oy: -1e4, active: false }
+
+// ---------------------------- 噪声 ----------------------------
+
+function hash1(v, seed) {
+  const s = Math.sin(v * 127.1 + seed * 311.7) * 43758.5453123
+  return s - Math.floor(s)
+}
+
+const smooth = (f) => f * f * (3 - 2 * f)
+
+/**
+ * 第 i 条切片在时刻 t 的位移，返回 -1 ~ 1。
+ *
+ * 沿**切片方向**和**时间方向**都做平滑插值，而不是每条切片直接取一个随机数 ——
+ * 这样相邻几条会共享接近的偏移，错位才是"成块的"。
+ * 这一点很关键：每条各自乱跳的话，字会被打成一堆辨认不出的碎片；
+ * 参考稿之所以仍能读出 TRAE，就是因为它的错位是成块的。
+ */
+function bandNoise(i, t) {
+  const ti = t * SPEED
+  const t0 = Math.floor(ti)
+  const tu = smooth(ti - t0)
+
+  const fi = i * BAND_FREQ
+  const f0 = Math.floor(fi)
+  const fu = smooth(fi - f0)
+
+  const v = (j, k) => hash1(j * 7.13 + k * 31.7, 3)
+
+  const a = v(f0, t0) * (1 - fu) + v(f0 + 1, t0) * fu
+  const b = v(f0, t0 + 1) * (1 - fu) + v(f0 + 1, t0 + 1) * fu
+  return (a * (1 - tu) + b * tu) * 2 - 1
+}
+
+// ---------------------------- 绘制 ----------------------------
+
+/** 把整行字标渲染到离屏画布；字号实测反推，保证刚好铺满一行 */
+function buildText() {
+  const el = canvasRef.value
+  if (!el) return
+
+  dpr = Math.min(window.devicePixelRatio || 1, 2)
+  w = el.clientWidth
+  h = el.clientHeight
+  if (!w || !h) return
+
+  el.width = Math.round(w * dpr)
+  el.height = Math.round(h * dpr)
+  ctx = el.getContext('2d')
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+  off = document.createElement('canvas')
+  off.width = Math.round(w * dpr)
+  off.height = Math.round(h * dpr)
+  octx = off.getContext('2d')
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  octx.clearRect(0, 0, w, h)
+
+  const family = "'NMNX Display', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif"
+
+  // 先量 100px 下这一行的宽度，再算出铺满画布需要的字号
+  octx.font = `900 100px ${family}`
+  const base = octx.measureText(MARK).width
+  if (!base) return
+  const size = ((w * 1.004) / base) * 100
+
+  octx.font = `900 ${size}px ${family}`
+  octx.textAlign = 'center'
+  octx.textBaseline = 'middle'
+  octx.fillStyle = INK
+  octx.fillText(MARK, w / 2, h / 2)
+}
+
+function draw(t) {
+  ctx.fillStyle = BRAND
+  ctx.fillRect(0, 0, w, h)
+
+  const bands = Math.ceil(h / BAND)
+  const sw = Math.round(w * dpr)
+
+  // 鼠标在画布里连续缓动一点，避免手抖直接反映到位移上
+  pointer.ox += (pointer.x - pointer.ox) * 0.12
+  pointer.oy += (pointer.y - pointer.oy) * 0.12
+
+  // 光标横向位置决定整体往哪边推
+  const bias = pointer.active ? (pointer.ox - w / 2) / (w / 2) : 0
+
+  for (let i = 0; i < bands; i++) {
+    const y = i * BAND
+    const bh = Math.min(BAND, h - y)
+    if (bh <= 0) break
+
+    let dx = bandNoise(i, t) * AMP
+
+    // 光标附近的切片被推得更狠，越远衰减越快
+    if (pointer.active) {
+      const d = Math.abs(y + bh / 2 - pointer.oy) / MOUSE_REACH
+      if (d < 1) {
+        const k = (1 - d) * (1 - d)
+        dx += bias * MOUSE_AMP * k
+      }
+    }
+
+    ctx.drawImage(
+      off,
+      0,
+      Math.round(y * dpr),
+      sw,
+      Math.round(bh * dpr),
+      dx,
+      y,
+      w,
+      bh,
+    )
   }
 }
 
-let raf = 0
-let markLeft = 0
-let centers = []
-let widths = []
-
-const s = {
-  clientX: -1e4,
-  down: false,
-  startX: 0,
-  drag: 0,
-  target: 0,
-  prevDrag: 0,
-  skew: 0,
-  active: false,
+function frame(now) {
+  raf = requestAnimationFrame(frame)
+  draw((now - startedAt) * 0.001)
 }
 
-// ---------------------------- 布局 ----------------------------
-
-/** 测量一行自然宽度，反推出刚好铺满容器的字号 */
-function fit() {
-  const row = rowRef.value
-  const mark = markRef.value
-  if (!row || !mark) return
-
-  const BASE = 100
-  row.style.fontSize = `${BASE}px`
-  const natural = row.getBoundingClientRect().width
-  if (!natural) return
-
-  // 乘 1.004 让两端微微出血，避免出现一条发丝缝
-  const size = Math.min((BASE * mark.clientWidth * 1.004) / natural, MAX_FONT)
-  row.style.fontSize = size.toFixed(2) + 'px'
+function onPointerMove(e) {
+  const r = canvasRef.value.getBoundingClientRect()
+  pointer.x = e.clientX - r.left
+  pointer.y = e.clientY - r.top
+  pointer.active = true
 }
 
-/** 缓存字标左边界、每个字的中心与宽度，帧内不再读布局 */
-function measure() {
-  const row = rowRef.value
-  if (!row) return
-  markLeft = row.getBoundingClientRect().left
-
-  centers = []
-  widths = []
-  letterEls.value.forEach((el, i) => {
-    if (!el) return
-    centers[i] = el.offsetLeft + el.offsetWidth / 2
-    widths[i] = el.offsetWidth || 1
-  })
+function onPointerLeave() {
+  pointer.active = false
+  pointer.x = -1e4
+  pointer.y = -1e4
 }
 
-function relayout() {
-  fit()
-  measure()
+function onVisibility() {
+  if (document.hidden) {
+    cancelAnimationFrame(raf)
+    raf = 0
+  } else if (!raf) {
+    raf = requestAnimationFrame(frame)
+  }
+}
+
+function rebuild() {
+  buildText()
+  draw(0)
+}
+
+let resizeTimer = 0
+function onResize() {
+  clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(rebuild, 160)
 }
 
 function toTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-// ---------------------------- 指针 ----------------------------
-
-function onPointerDown(e) {
-  if (e.pointerType !== 'mouse') return
-  s.down = true
-  s.startX = e.clientX - s.drag
-  markRef.value?.setPointerCapture?.(e.pointerId)
-}
-
-function onPointerMove(e) {
-  s.clientX = e.clientX
-  s.active = true
-  if (s.down) {
-    const d = e.clientX - s.startX
-    s.target = Math.max(-DRAG_MAX, Math.min(DRAG_MAX, d))
-  }
-}
-
-function onPointerUp() {
-  s.down = false
-  s.target = 0
-}
-
-function onPointerLeave() {
-  // 拖拽期间不要清光标，否则抬起效果会突然断掉
-  if (s.down) return
-  s.active = false
-  s.clientX = -1e4
-}
-
-// ---------------------------- 逐帧 ----------------------------
-
-function frame() {
-  raf = requestAnimationFrame(frame)
-
-  // 拖拽位移：按下时跟手（快），松手回中（慢）
-  s.drag += (s.target - s.drag) * (s.down ? 0.24 : 0.12)
-
-  const v = s.drag - s.prevDrag
-  s.prevDrag = s.drag
-  s.skew += (v * 0.5 - s.skew) * 0.2
-
-  const els = letterEls.value
-
-  for (let i = 0; i < els.length; i++) {
-    const el = els[i]
-    if (!el) continue
-
-    const lag = 1 - i * LAG
-
-    // 光标影响：按到字中心的距离衰减，平方衰减让过渡更"软"
-    let f = 0
-    let dir = 1
-    if (s.active) {
-      const cx = centers[i] ?? 0
-      const w = widths[i] ?? 1
-      const delta = s.clientX - markLeft - s.drag * lag - cx
-      const d = Math.abs(delta) / (REACH * w)
-      if (d < 1) {
-        f = (1 - d) * (1 - d)
-        // 往光标的外侧推，负号处理光标正好落在字心的情况
-        dir = delta >= 0 ? -1 : 1
-      }
-    }
-
-    const tx = s.drag * lag + dir * f * PUSH
-    const ty = -f * LIFT
-    const skew = s.skew * lag
-
-    el.style.transform =
-      `translate3d(${tx.toFixed(2)}px, ${ty.toFixed(2)}px, 0) ` + `skewX(${skew.toFixed(2)}deg)`
-  }
-}
-
-// ---------------------------- 生命周期 ----------------------------
-
-function onScroll() {
-  measure()
-}
-
 onMounted(() => {
-  relayout()
+  buildText()
 
-  // 字体换上来之后字宽会变，必须重测一次
-  if (document.fonts?.ready) document.fonts.ready.then(relayout)
+  // 字体换上来之后字宽会变，必须重测重画
+  if (document.fonts?.ready) document.fonts.ready.then(rebuild)
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  if (reduced) return
 
-  raf = requestAnimationFrame(frame)
-  window.addEventListener('resize', relayout)
-  window.addEventListener('scroll', onScroll, { passive: true })
+  if (reduced) {
+    // 关掉动效时只画静态一帧：切片不再随时间变化，鼠标也不参与。
+    // 特意打一行日志，否则在页面上完全看不出是"被降级了"还是"写坏了"。
+    console.info('[SiteFooter] 检测到 prefers-reduced-motion，字标只渲染静态一帧。')
+    draw(0)
+  } else {
+    startedAt = performance.now()
+    raf = requestAnimationFrame(frame)
+  }
+
+  window.addEventListener('resize', onResize)
+  document.addEventListener('visibilitychange', onVisibility)
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(resizeTimer)
   cancelAnimationFrame(raf)
-  window.removeEventListener('resize', relayout)
-  window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('resize', onResize)
+  document.removeEventListener('visibilitychange', onVisibility)
 })
 </script>
 
@@ -273,26 +308,17 @@ onBeforeUnmount(() => {
       激活码按账号、经纪商与有效期签发。
     </p>
 
-    <!-- 字标 -->
+    <!-- 字标：横向切片位移 -->
     <div
       ref="markRef"
       class="ftr__mark"
-      @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
-      @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
       @pointerleave="onPointerLeave"
     >
-      <div ref="rowRef" class="ftr__mark-row">
-        <span
-          v-for="(c, i) in letters"
-          :key="i"
-          :ref="bindLetter(i)"
-          class="ftr__letter"
-          aria-hidden="true"
-        >{{ c }}</span>
+      <div class="ftr__mark-inner">
+        <canvas ref="canvasRef" class="ftr__canvas" />
       </div>
-      <span class="ftr__sr">{{ MARK }}</span>
+      <span class="ftr__sr">{{ letters.join('') }}</span>
     </div>
   </footer>
 </template>
@@ -426,50 +452,37 @@ onBeforeUnmount(() => {
 
 .ftr__note {
   margin: 0;
-  padding-bottom: 46px;
+  padding-bottom: 44px;
   max-width: 78ch;
   font-size: 12.5px;
   line-height: 1.95;
   color: var(--muted);
 }
 
-/* ---------------------------- 超大汉字字标 ----------------------------
-   字号由 JS 实测后写入，这里只定裁切与交互，所以字体、文案、
-   视口宽度怎么变都不用改样式。
-   行高 1 是有意的：汉字字宽 = 1em，四个字铺满一行时行高 1em 正好
-   让色块高度等于字高，字完整显示、不被裁切。 */
+/* ---------------------------- 字标 ----------------------------
+   底色整幅铺满，画布限宽居中（与参考站一致：那边也是
+   max-w-[1600px] 的画布 + 整幅品牌色）。
+   高度取 1/4 屏宽：四个汉字各占 1em，铺满一行时字高正好是宽度的四分之一。 */
 
 .ftr__mark {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: hidden;
   background: var(--cyan);
-  cursor: grab;
-  touch-action: pan-y;
-  user-select: none;
+  height: calc(min(100vw, 1600px) / 4);
 }
 
-.ftr__mark:active {
-  cursor: grabbing;
+.ftr__mark-inner {
+  width: 100%;
+  max-width: 1600px;
+  height: 100%;
+  margin: 0 auto;
+  overflow: hidden;
 }
 
-.ftr__mark-row {
-  position: relative;
-  display: flex;
-  /* JS 会覆盖这个值；留个兜底免得脚本没跑时字小得看不见 */
-  font-size: 25vw;
-  line-height: 1;
-}
-
-.ftr__letter {
+.ftr__canvas {
   display: block;
-  font-family: 'NMNX Display', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-  font-weight: 900;
-  color: var(--bg);
-  transform-origin: 50% 100%;
-  will-change: transform;
+  width: 100%;
+  height: 100%;
 }
 
 /* 字标对读屏是一串被拆散的字，用一份隐藏的完整文本代替 */
@@ -480,11 +493,5 @@ onBeforeUnmount(() => {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ftr__letter {
-    will-change: auto;
-  }
 }
 </style>
