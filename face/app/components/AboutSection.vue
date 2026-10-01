@@ -26,7 +26,7 @@ const orbits = [
         </p>
       </div>
 
-      <div class="about__visual" v-reveal="{ y: 0, duration: 1.4 }">
+      <div class="about__visual rv" v-reveal="{ y: 0, duration: 1.4 }">
         <svg class="orbit" viewBox="0 0 420 420" aria-hidden="true">
           <defs>
             <radialGradient id="core" cx="50%" cy="50%" r="50%">

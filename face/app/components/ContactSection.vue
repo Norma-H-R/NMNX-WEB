@@ -1,8 +1,8 @@
 <script setup>
 // 二维码走模块引用而不是 public 绝对路径：
-// public 里的文件会被原样拷贝并用 /qr.png 引用，部署到 GitHub Pages 的
-// 子路径（/仓库名/）下会 404。交给 Vite 处理成相对路径才安全
-import qrUrl from '../assets/qr.png'
+// public 里的文件会被原样拷贝并用 /qr.png 引用，站点一旦部署在子路径下
+// 就会 404。交给打包器处理成带 hash 的资源引用才安全。
+import qrUrl from '~/assets/qr.png'
 
 const channels = [
   { k: '微信', v: 'XP863131' },
@@ -14,7 +14,7 @@ const channels = [
 <template>
   <section id="contact" class="section contact">
     <div class="container">
-      <div class="contact__panel" v-reveal="{ y: 44, duration: 1.2 }">
+      <div class="contact__panel rv" v-reveal="{ y: 44, duration: 1.2 }">
         <div class="contact__text">
           <p class="eyebrow">联系</p>
           <h2 class="title">要一个自己的<br />激活码？</h2>

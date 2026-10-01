@@ -1,85 +1,66 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
-import HelloWorld from './components/HelloWorld.vue'
+import { RouterView } from 'vue-router'
+import { darkTheme, dateZhCN, zhCN, type GlobalThemeOverrides } from 'naive-ui'
+
+/**
+ * 主题对齐官网调性：深空底 + 青色主色 + 低饱和描边。
+ * 色值取自 face/app/assets/css/main.css 里的设计变量，两边保持一致，
+ * 将来改品牌色记得两边一起改。
+ */
+const themeOverrides: GlobalThemeOverrides = {
+  common: {
+    primaryColor: '#6ee7ff',
+    primaryColorHover: '#8beeff',
+    primaryColorPressed: '#4fd6f2',
+    primaryColorSuppl: '#6ee7ff',
+
+    bodyColor: '#06070d',
+    cardColor: '#0e1120',
+    modalColor: '#0e1120',
+    popoverColor: '#0e1120',
+    tableColor: '#0e1120',
+    inputColor: 'rgba(255, 255, 255, 0.04)',
+
+    borderColor: 'rgba(255, 255, 255, 0.10)',
+    dividerColor: 'rgba(255, 255, 255, 0.08)',
+
+    textColorBase: '#e9ecf5',
+    textColor1: '#e9ecf5',
+    textColor2: '#a9b1c6',
+    textColor3: '#7c849b',
+
+    borderRadius: '10px',
+    fontFamily:
+      "Inter, 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, sans-serif",
+  },
+}
 </script>
 
 <template>
-  <header>
-    <img alt="Vue logo" class="logo" src="@/assets/logo.svg" width="125" height="125" />
+  <!--
+    管理端外壳。
 
-    <div class="wrapper">
-      <HelloWorld msg="You did it!" />
-
-      <nav>
-        <RouterLink to="/">Home</RouterLink>
-        <RouterLink to="/about">About</RouterLink>
-      </nav>
-    </div>
-  </header>
-
-  <RouterView />
+    组件本身由 unplugin-vue-components 按需引入，所以这里不 import 任何 n-* 组件。
+    下面四个 Provider 是命令式 API 的前提，缺哪个对应的 API 就会报错：
+      n-message-provider       → useMessage
+      n-dialog-provider        → useDialog
+      n-notification-provider  → useNotification
+      n-loading-bar-provider   → useLoadingBar
+  -->
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="themeOverrides"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+  >
+    <n-loading-bar-provider>
+      <n-dialog-provider>
+        <n-notification-provider>
+          <n-message-provider>
+            <RouterView />
+          </n-message-provider>
+        </n-notification-provider>
+      </n-dialog-provider>
+    </n-loading-bar-provider>
+  </n-config-provider>
 </template>
-
-<style scoped>
-header {
-  line-height: 1.5;
-  max-height: 100vh;
-}
-
-.logo {
-  display: block;
-  margin: 0 auto 2rem;
-}
-
-nav {
-  width: 100%;
-  font-size: 12px;
-  text-align: center;
-  margin-top: 2rem;
-}
-
-nav a.router-link-exact-active {
-  color: var(--color-text);
-}
-
-nav a.router-link-exact-active:hover {
-  background-color: transparent;
-}
-
-nav a {
-  display: inline-block;
-  padding: 0 1rem;
-  border-left: 1px solid var(--color-border);
-}
-
-nav a:first-of-type {
-  border: 0;
-}
-
-@media (min-width: 1024px) {
-  header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
-  }
-
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  nav {
-    text-align: left;
-    margin-left: -1rem;
-    font-size: 1rem;
-
-    padding: 1rem 0;
-    margin-top: 1rem;
-  }
-}
-</style>

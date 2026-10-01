@@ -224,4 +224,22 @@ onMounted(() => {
     -webkit-text-stroke-width: 1px;
   }
 }
+
+/* SSR 首帧遮罩（类由 nuxt.config 的 head 脚本挂在 <html> 上）。
+   开启服务端渲染后，HTML 一到达浏览器就会先绘制一遍，而入场动画要等 JS
+   加载并注水后才由 GSAP 的 from() 接管。这段时间里首屏元素是"最终可见"
+   状态，会闪一下再被隐藏。
+   这里先按 GSAP 的起始状态把它们压成透明：
+     - 位置差异（translate / scale）靠 opacity: 0 一起遮住，不需要逐个复刻
+     - 等组件挂载、GSAP 写好内联样式后，由 app.vue 摘掉 .js-on，遮罩整体失效
+   没有 JS 时不会挂这个类，内容照常可见。 */
+.js-on .hero__eyebrow,
+.js-on .hero__sub,
+.js-on .hero__cta > *,
+.js-on .hero__meta > *,
+.js-on .hero__cue,
+.js-on .hero__rule,
+.js-on .char {
+  opacity: 0;
+}
 </style>

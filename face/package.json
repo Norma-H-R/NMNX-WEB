@@ -1,20 +1,21 @@
 {
-  "name": "nmnx-web",
-  "version": "0.1.0",
-  "private": true,
+  "name": "face",
   "type": "module",
-  "description": "南门拈星 · 官方网站",
+  "private": true,
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
   },
   "dependencies": {
     "gsap": "^3.15.0",
-    "vue": "^3.5.43"
+    "nuxt": "^4.5.2",
+    "vue": "^3.5.43",
+    "vue-router": "^5.3.1"
   },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.9",
-    "vite": "^8.3.1"
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }
