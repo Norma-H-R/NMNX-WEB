@@ -2,57 +2,55 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 /**
- * 点阵地形背景。
+ * 点阵云团背景。
  *
- * 纯黑底上，由小方块构成一条横贯页面的"山脊"，中部密、两侧散，
- * 点有明暗层次所以有体积感。
+ * 参考 trae.ai：纯黑底上是一大片由小方块聚成的**云雾团**，占据视口上方约五成，
+ * 有浓核、有空洞、有游离散点，浓密处泛青，整体缓慢变形。
+ * 观感上很像把一张低分辨率位图放大 —— 其实就是「把一个平滑的密度场做阈值化」。
  *
- * 动效分四层叠出来，缺一层就会显得很"呆"：
- *   1. 地形演进 —— 两条脊线各自缓慢漂移，形态持续变化，不是整体平移；
- *   2. 行波     —— 一道正弦波沿 x 扫过去，是"活着"最直观的来源；
- *   3. 呼吸     —— 整条脊线上下缓慢起伏，幅度小但要一直有；
- *   4. 闪烁     —— 每个点按自己的相位明暗脉动，打散"一整块在动"的机械感。
+ * 和第一版的根本区别：第一版用的是一维山脊函数（每列一个高度），
+ * 出来是一条细波浪带；这里是二维噪声密度场，才会成"团"。
  *
- * 再加上鼠标交互：光标附近的地形被顶起来，局部变亮，整层还有缓动视差。
+ * 调参上最关键的一条：**大尺度分布要压过细节噪声**，否则密度全挤在均值附近，
+ * 云就糊成一整片灰，既没有浓核也没有空洞。所以下面 mac 占 0.74 而 det 只占 0.26。
  *
- * 实现取舍（不引任何库，纯 canvas 手写）：
- *   - 山脊是一维函数，每列只算一次高度。地形只跟 x 有关，噪声采样从
- *     "几万次/帧"降到"两百多次/帧"。
- *   - 每列只遍历脊线上下很窄的一段，屏幕大部分是黑的，不浪费绘制。
- *   - 深度靠两条脊线做：远的那条更淡更薄、起伏更小。
- *   - 点的位置抖动由哈希算出（逐帧稳定），用 Math.random 会导致每帧乱闪。
- *   - 切到后台标签页停掉 rAF。
+ * 性能设计（重点，二维逐点采样每帧几万次会很慢）：
+ *   - 密度场只在 resize 时算一次，存进 Float32Array；
+ *   - 同时算两份场（不同噪声偏移），帧间交叉淡入淡出，云团就会缓慢变形，
+ *     每帧的工作量只剩一次线性插值；
+ *   - 逐点哈希用整数位运算（Math.imul），不碰 Math.sin，比三角函数快得多；
+ *   - 每帧先比阈值再决定要不要画，实际绘制的点只有全部格子的一部分。
  */
 
 // ---------------------------- 可调参数 ----------------------------
 
-const SPACING = 9 // 点阵间距（CSS 像素）
-const DOT = 1.7 // 点的基础边长
+const SPACING = 6 // 格子间距（CSS 像素）
+const DOT = 5 // 方块边长，比间距小一点，方块之间会留出暗缝，才有"点阵"感
+const SIZE_JITTER = 1.3 // 方块尺寸的随机浮动，打散整齐感
 
-const RIDGE_Y = 0.33 // 主脊线在视口高度上的位置
-const RIDGE_AMP = 0.14 // 脊线起伏幅度（相对视口高度）
-const RIDGE_THICK = 0.052 // 主脊线厚度（相对视口高度）
+const CLOUD_Y = 0.38 // 云团中心在视口高度上的位置
+const CLOUD_SPREAD = 0.34 // 云团的垂直扩散半径（相对视口高度）
+const FIELD_X = 150 // 细节噪声在 x 方向的尺度（越大，云块越宽）
+const FIELD_Y = 62 // 细节噪声在 y 方向的尺度（比 x 小 → 云块横向拉长）
 
-// 动效强度
-const DRIFT_A = 0.09 // 主脊线漂移速度（噪声单位/秒）
-const DRIFT_B = 0.07 // 次脊线漂移速度，与主脊线错开才不会像整体平移
-const WAVE_SPEED = 1.15 // 行波速度
-const WAVE_AMP = 0.22 // 行波幅度（相对起伏幅度）
-const BREATH_SPEED = 0.55 // 呼吸速度
-const BREATH_AMP = 0.16 // 呼吸幅度
-const TWINKLE = 0.3 // 闪烁深度，0 = 不闪
+// 阈值和上限是照着**实测的密度分布**定的（把密度场跑出来统计分位数再挑），
+// 不是拍脑袋。改上面的噪声尺度或权重之后，这两个数要重新对一遍。
+const THRESHOLD = 0.55
+const PEAK = 1.45 // 归一化上限：达到这个密度就完全不透明
+const GAMMA = 0.8 // 亮度曲线，<1 让中间调提亮一点
+
+const MORPH_PERIOD = 26 // 两份密度场交叉淡入淡出的周期（秒）
 
 // 鼠标交互
-const PARALLAX_X = 18 // 视差强度（像素）
-const PARALLAX_Y = 10
-const CURSOR_REACH = 260 // 光标影响半径（像素）
-const CURSOR_LIFT = 52 // 光标把地形顶起的高度（像素）
-const CURSOR_BOOST = 0.75 // 光标附近点的额外亮度
+const PUSH_X = 22 // 光标把云团推开的最大水平距离
+const PUSH_Y = 26 // 光标把云团推开的最大垂直距离
+const REACH = 200 // 影响半径（像素）
+const BOOST = 0.45 // 光标附近的额外亮度
 
-// 颜色与 main.css 里的设计变量保持一致，改主题色时两边一起改
-const RGB_DOT = '233, 236, 245' // = --text
+// 颜色与 main.css 里的设计变量保持一致
+const RGB_DOT = '226, 236, 245' // 接近 --text
 const RGB_ACCENT = '110, 231, 255' // = --cyan
-const ACCENT_AT = 0.66 // 强调色的噪声阈值，越高越少
+const ACCENT_AT = 0.8 // 归一化亮度高于此值才转强调色，于是青色只出现在最浓的核里
 
 // ---------------------------- 状态 ----------------------------
 
@@ -64,182 +62,244 @@ let w = 0
 let h = 0
 let cols = 0
 let rows = 0
-let jitter = null // Float32Array，逐点抖动 + 闪烁相位
-let lastT = 0
+let fieldA = null
+let fieldB = null
+let jitter = null
+let startedAt = 0
 
 const pointer = {
-  // 归一化视差目标（-1 ~ 1）与缓动值
   tx: 0,
   ty: 0,
   x: 0,
   y: 0,
-  // 像素坐标的缓动值，用于"顶起地形"
-  cxp: -1e4,
-  cyp: -1e4,
-  nxp: -1e4,
-  nyp: -1e4,
+  cx: -1e4,
+  cy: -1e4,
+  ncx: -1e4,
+  ncy: -1e4,
   active: false,
 }
 
 // ---------------------------- 噪声 ----------------------------
 
-function hash(i, seed) {
-  const s = Math.sin(i * 127.1 + seed * 311.7) * 43758.5453123
-  return s - Math.floor(s)
+// 整数哈希。用 Math.imul 做 32 位乘法，避免 JS 数值精度问题。
+function hash2(ix, iy, seed) {
+  let n = Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(seed, 1442695041)
+  n = Math.imul(n ^ (n >>> 13), 1274126177)
+  n ^= n >>> 16
+  return (n >>> 0) / 4294967296
 }
 
-function noise1(x, seed) {
-  const i = Math.floor(x)
-  const f = x - i
-  const u = f * f * (3 - 2 * f) // smoothstep，避免折线感
-  return hash(i, seed) * (1 - u) + hash(i + 1, seed) * u
+function noise2(x, y, seed) {
+  const ix = Math.floor(x)
+  const iy = Math.floor(y)
+  const fx = x - ix
+  const fy = y - iy
+  const ux = fx * fx * (3 - 2 * fx)
+  const uy = fy * fy * (3 - 2 * fy)
+
+  const a = hash2(ix, iy, seed)
+  const b = hash2(ix + 1, iy, seed)
+  const c = hash2(ix, iy + 1, seed)
+  const d = hash2(ix + 1, iy + 1, seed)
+
+  const top = a + (b - a) * ux
+  const bot = c + (d - c) * ux
+  return top + (bot - top) * uy
 }
 
-// 三个八度叠加，系数和为 1，结果落在 0~1
-function fbm1(x, seed) {
+function fbm2(x, y, seed) {
   return (
-    noise1(x, seed) * 0.5 +
-    noise1(x * 2.03, seed + 13.7) * 0.28 +
-    noise1(x * 4.11, seed + 41.3) * 0.22
+    noise2(x, y, seed) * 0.52 +
+    noise2(x * 2.07, y * 2.11, seed + 19) * 0.28 +
+    noise2(x * 4.13, y * 4.09, seed + 47) * 0.2
   )
 }
 
-// ---------------------------- 绘制 ----------------------------
+/** 把 [lo, hi] 线性拉到 0~1，区间外截断。用来放大噪声的对比。 */
+function stretch(v, lo, hi) {
+  const t = (v - lo) / (hi - lo)
+  return t < 0 ? 0 : t > 1 ? 1 : t
+}
+
+// ---------------------------- 密度场 ----------------------------
+
+/**
+ * 预计算两份密度场。
+ * 每份 = 垂直包络 × 大尺度分布 × 细节纹理，全部烘焙进去，
+ * 于是每帧只剩「插值 + 比阈值 + 画方块」。
+ */
+function buildFields() {
+  fieldA = new Float32Array(cols * rows)
+  fieldB = new Float32Array(cols * rows)
+
+  const sx = 1 / FIELD_X
+  const sy = 1 / FIELD_Y
+  const cy = h * CLOUD_Y
+  const spread = h * CLOUD_SPREAD
+
+  for (let r = 0; r < rows; r++) {
+    const y = r * SPACING
+    const ny = (y - cy) / spread
+
+    // 抛物线包络再做一次 smoothstep，边缘消散得自然些
+    const e0 = Math.max(0, 1 - ny * ny * 0.9)
+    const env = e0 * e0 * (3 - 2 * e0)
+    if (env <= 0.002) continue
+
+    for (let c = 0; c < cols; c++) {
+      const x = c * SPACING
+      const i = r * cols + c
+      const fx = x * sx
+      const fy = y * sy
+
+      // 关键一步：先对噪声做对比拉伸，再相乘。
+      // 原始 fbm 的取值几乎全挤在 0.5 附近（实测 p80 到 p90 只差 0.1），
+      // 不拉伸的话阈值化出来是一整片糊的灰 —— 既没有浓核也没有空洞。
+      // mac 用很窄的区间拉伸 → 结果接近 0/1 两态，云才是「成块」的，
+      // 而不是一层渐变的雾；det 的区间宽一些，负责块内部的纹理与空洞。
+      const macA = stretch(fbm2(x * 0.0013 + 11, y * 0.0032 + 5, 17), 0.4, 0.6)
+      const detA = stretch(fbm2(fx, fy, 3), 0.35, 0.65)
+      fieldA[i] = env * (0.05 + 1.42 * macA) * (0.32 + 1.05 * detA)
+
+      // 第二份用不同偏移，交叉淡入淡出时云团会缓慢变形
+      const macB = stretch(fbm2(x * 0.0013 + 41, y * 0.0032 + 23, 53), 0.4, 0.6)
+      const detB = stretch(fbm2(fx + 3.1, fy + 1.7, 29), 0.35, 0.65)
+      fieldB[i] = env * (0.05 + 1.42 * macB) * (0.32 + 1.05 * detB)
+    }
+  }
+}
 
 function buildJitter() {
-  // 线性同余生成器，保证 resize 后纹理位置稳定
-  let s = 1
+  let s = 12345
   const next = () => {
-    s = (s * 1664525 + 1013904223) % 4294967296
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0
     return s / 4294967296
   }
   jitter = new Float32Array(cols * rows)
   for (let i = 0; i < jitter.length; i++) jitter[i] = next()
 }
 
-function resize() {
+// ---------------------------- 绘制 ----------------------------
+
+// resize 要重算密度场，代价不小，做个防抖
+let resizeTimer = 0
+
+function measureCanvas() {
   const el = canvasRef.value
-  if (!el) return
+  if (!el) return false
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2)
-  w = el.clientWidth
-  h = el.clientHeight
+  const nw = el.clientWidth
+  const nh = el.clientHeight
+  if (nw === w && nh === h) return false
 
+  w = nw
+  h = nh
   el.width = Math.round(w * dpr)
   el.height = Math.round(h * dpr)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   cols = Math.ceil(w / SPACING) + 1
   rows = Math.ceil(h / SPACING) + 1
+  return true
+}
+
+function rebuild() {
+  if (!measureCanvas()) return
+  buildFields()
   buildJitter()
 }
 
+function onResize() {
+  clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(rebuild, 180)
+}
+
 function draw(t) {
-  // 光标缓动：视差慢一点，顶起地形快一点，手感才跟得上
   pointer.x += (pointer.tx - pointer.x) * 0.045
   pointer.y += (pointer.ty - pointer.y) * 0.045
-  pointer.cxp += (pointer.nxp - pointer.cxp) * 0.16
-  pointer.cyp += (pointer.nyp - pointer.cyp) * 0.16
+  pointer.cx += (pointer.ncx - pointer.cx) * 0.15
+  pointer.cy += (pointer.ncy - pointer.cy) * 0.15
 
-  const ox = pointer.x * PARALLAX_X
-  const oy = pointer.y * PARALLAX_Y
+  const ox = pointer.x * 16
+  const oy = pointer.y * 9
 
   ctx.clearRect(0, 0, w, h)
 
-  const ridgeY = h * RIDGE_Y + oy
-  const amp = h * RIDGE_AMP
-  const th1 = h * RIDGE_THICK
-  const th2 = th1 * 0.72
+  // 两份场来回交叉，0 → 1 → 0，云团因此缓慢变形而不是整体平移
+  const morph = 0.5 - 0.5 * Math.cos((t / MORPH_PERIOD) * Math.PI * 2)
 
-  const breath = Math.sin(t * BREATH_SPEED) * amp * BREATH_AMP
-  const cursorLive = pointer.active
-  const reach2 = CURSOR_REACH * CURSOR_REACH
+  const live = pointer.active
+  const reach2 = REACH * REACH
+  const inv = 1 / (PEAK - THRESHOLD)
 
-  for (let c = 0; c < cols; c++) {
-    const x = c * SPACING
+  for (let r = 0; r < rows; r++) {
+    const y = r * SPACING
 
-    // 两条脊线用不同的时间漂移，整体就不是平移，而是在缓慢变形
-    const n1 = fbm1(x * 0.0032 + t * DRIFT_A, 1.0)
-    const n2 = fbm1(x * 0.0044 - t * DRIFT_B, 5.0)
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c
 
-    // 行波：沿 x 扫出去的一道起伏，是"在动"最直接的信号
-    const wave = Math.sin(x * 0.006 - t * WAVE_SPEED) * amp * WAVE_AMP
+      // 两份密度场插值 —— 每帧唯一的"重量级"运算，就这一下
+      const a0 = fieldA[i]
+      const d = a0 + (fieldB[i] - a0) * morph
+      if (d <= THRESHOLD) continue
 
-    let y1 = ridgeY + (n1 - 0.5) * 2 * amp + wave + breath
-    let y2 = ridgeY + h * 0.078 + (n2 - 0.5) * 2 * amp * 0.85 + breath * 0.6
+      const x = c * SPACING
 
-    // 光标把附近地形顶起来
-    let cursorBoost = 0
-    if (cursorLive) {
-      const dx = x - pointer.cxp
-      const k = 1 / (1 + (dx * dx) / reach2)
-      y1 -= k * CURSOR_LIFT * 0.5
-      y2 -= k * CURSOR_LIFT * 0.3
-      cursorBoost = k
-    }
+      let dx = x + ox
+      let dy = y + oy
+      let boost = 0
 
-    const accent = fbm1(x * 0.0055 + t * 0.05, 9.0) > ACCENT_AT
-    const dx = x + ox
-
-    let r = Math.floor(Math.min(y1 - th1, y2 - th2) / SPACING)
-    const rEnd = Math.ceil(Math.max(y1 + th1, y2 + th2) / SPACING)
-    if (r < 0) r = 0
-
-    for (; r <= rEnd && r < rows; r++) {
-      const y = r * SPACING
-
-      // 亮度沿垂直方向衰减，边缘自然消散
-      let a = 0
-      const d1 = Math.abs(y - y1) / th1
-      if (d1 < 1) a = (1 - d1) * (1 - d1)
-
-      const d2 = Math.abs(y - y2) / th2
-      if (d2 < 1) {
-        const a2 = (1 - d2) * (1 - d2) * 0.42
-        if (a2 > a) a = a2
+      // 光标把云团推开并提亮附近
+      if (live) {
+        const rx = dx - pointer.cx
+        const ry = dy - pointer.cy
+        const dist2 = rx * rx + ry * ry
+        if (dist2 < reach2) {
+          const k = 1 - dist2 / reach2
+          const kk = k * k
+          const invD = 1 / Math.sqrt(dist2 + 1)
+          dx += rx * invD * kk * PUSH_X
+          dy += ry * invD * kk * PUSH_Y
+          boost = kk * BOOST
+        }
       }
 
-      if (a < 0.035) continue
+      // 归一化亮度：阈值到一个上限之间线性映射，再做一次 gamma 提亮中间调
+      let lit = (d - THRESHOLD) * inv
+      if (lit > 1) lit = 1
+      lit = Math.pow(lit, GAMMA) * (0.78 + jitter[i] * 0.3) + boost
+      if (lit > 1) lit = 1
 
-      const j = jitter[r * cols + c]
+      const size = DOT - SIZE_JITTER * (1 - lit)
 
-      // 闪烁：每个点按自己的相位脉动，打散"整块一起动"的机械感
-      const tw = 1 - TWINKLE + TWINKLE * Math.sin(t * (0.7 + j * 1.7) + j * 43.0)
+      ctx.fillStyle =
+        lit > ACCENT_AT
+          ? `rgba(${RGB_ACCENT},${lit.toFixed(3)})`
+          : `rgba(${RGB_DOT},${lit.toFixed(3)})`
 
-      let alpha = a * (0.52 + j * 0.48) * tw
-
-      // 光标附近额外提亮
-      if (cursorBoost > 0.02) alpha *= 1 + cursorBoost * CURSOR_BOOST
-
-      const size = DOT * (0.7 + a * 0.75)
-
-      ctx.fillStyle = accent
-        ? `rgba(${RGB_ACCENT},${alpha.toFixed(3)})`
-        : `rgba(${RGB_DOT},${alpha.toFixed(3)})`
-
-      ctx.fillRect(dx, y + oy * 0.5, size, size)
+      ctx.fillRect(dx, dy, size, size)
     }
   }
 }
 
 function frame(now) {
   raf = requestAnimationFrame(frame)
-  lastT = now * 0.001
-  draw(lastT)
+  draw((now - startedAt) * 0.001)
 }
 
 function onPointerMove(e) {
   pointer.tx = (e.clientX / w) * 2 - 1
   pointer.ty = (e.clientY / h) * 2 - 1
-  pointer.nxp = e.clientX
-  pointer.nyp = e.clientY
+  pointer.ncx = e.clientX
+  pointer.ncy = e.clientY
   pointer.active = true
 }
 
 function onPointerLeave() {
   pointer.active = false
-  pointer.nxp = -1e4
-  pointer.nyp = -1e4
+  pointer.ncx = -1e4
+  pointer.ncy = -1e4
   pointer.tx = 0
   pointer.ty = 0
 }
@@ -255,31 +315,35 @@ function onVisibility() {
 
 onMounted(() => {
   ctx = canvasRef.value.getContext('2d')
-  resize()
+  measureCanvas()
+  buildFields()
+  buildJitter()
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   if (reduced) {
     // 系统开了"减少动态效果"时只画静态一帧，不起动画循环。
-    // 这里特意打一行日志：否则在页面上完全看不出是"被降级了"还是"写坏了"。
+    // 特意打一行日志：否则在页面上完全看不出是"被降级了"还是"写坏了"。
     console.info(
       '[DotMatrix] 检测到 prefers-reduced-motion，背景只渲染静态一帧。' +
         '想看到动效请在系统里打开动画效果。',
     )
     draw(0)
   } else {
+    startedAt = performance.now()
     raf = requestAnimationFrame(frame)
     window.addEventListener('pointermove', onPointerMove, { passive: true })
     document.addEventListener('pointerleave', onPointerLeave)
   }
 
-  window.addEventListener('resize', resize)
+  window.addEventListener('resize', onResize)
   document.addEventListener('visibilitychange', onVisibility)
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(resizeTimer)
   cancelAnimationFrame(raf)
-  window.removeEventListener('resize', resize)
+  window.removeEventListener('resize', onResize)
   window.removeEventListener('pointermove', onPointerMove)
   document.removeEventListener('pointerleave', onPointerLeave)
   document.removeEventListener('visibilitychange', onVisibility)
