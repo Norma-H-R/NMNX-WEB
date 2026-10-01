@@ -16,9 +16,9 @@ onMounted(() => {
 <template>
   <NuxtRouteAnnouncer />
 
-  <!-- 背景层：极光光晕 + 星场，都在内容之下 -->
-  <div class="aurora" aria-hidden="true" />
-  <StarField />
+  <!-- 背景层：点阵地形，在内容之下。
+       原先的极光光晕（.aurora）按新设计去掉了，需要的话可以从 git 历史里找回。 -->
+  <DotMatrix />
 
   <SiteHeader />
 

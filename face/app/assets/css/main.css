@@ -28,6 +28,22 @@
     U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* 同一个字体文件的第二个别名，权重范围放开到 100~900。
+   只给页脚那个超大宇标用 —— 那里需要真正的粗体（900），
+   而上面的 'Inter' 故意锁在 300~600：首屏标题是靠描边"长胖"的，
+   一旦把范围放开，标题的字形会跟着变，属于意外回归。
+   别名指向同一个文件，浏览器只会下载一次。 */
+@font-face {
+  font-family: 'Inter Display';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-var.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   --bg: #06070d;
   --bg-soft: #0a0c15;
@@ -327,7 +343,7 @@ img {
 }
 
 /* --------------------------------------------------------------------------
-   质感层：噪点 + 顶部光晕
+   质感层：噪点
    -------------------------------------------------------------------------- */
 
 .grain {
@@ -338,16 +354,6 @@ img {
   opacity: 0.032;
   mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-.aurora {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(60vw 46vw at 78% -6%, rgba(167, 139, 250, 0.16), transparent 60%),
-    radial-gradient(54vw 40vw at 12% 8%, rgba(110, 231, 255, 0.11), transparent 62%);
 }
 
 /* --------------------------------------------------------------------------

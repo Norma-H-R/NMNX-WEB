@@ -5,3 +5,12 @@
 *.log
 .DS_Store
 Thumbs.db
+
+# 设计参考与调试用的临时产物（非项目代码，用完即删）
+# 注意：这几条是临时的，删掉对应文件后这里也要一起清掉
+/_trae*
+/_chrome*
+/_shot*
+/_local*
+/shot.log
+/probe.log
