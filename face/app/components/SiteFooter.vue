@@ -6,24 +6,16 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
  *
  * 上半是信息条，下半是压在品牌色上的超大汉字字标。
  *
- * 字标沿用参考站的做法：**横向切片位移**（俗称 datamosh / glitch）。
- * 整行字被切成一条条横向细带，每条带左右错开不同的距离。
+ * 字标效果：**电子故障风（glitch）**，类似抖音那种红蓝错位的故障抖动。
+ * 关键点：
+ *   - **大部分时间是正常静止的字**，可读性优先。
+ *   - 每隔 1.6~4.4 秒随机爆发一次，持续约 0.26~0.7 秒；爆发期间整幅字做
+ *     红/紫两色 RGB 错位 + 上下微抖 + 几条横向切片被推开，结束后迅速回落。
+ *   - 纯时间驱动，不依赖鼠标；完全自托管，不引任何动画库。
  *
- * 行为上有一个关键点（我一开始做错了，后来实测纠正）：
- *   **静止的时候字标是完全正常的，不动。**
- *   只有鼠标在它上面移动时才产生切片位移，位移幅度跟着鼠标移动的幅度走；
- *   鼠标停下之后，位移在一两秒内平滑衰减回零，字标重新变回静止。
- *
- *   （我之前做成了"一直在动"，是因为取样时截到了衰减过程中的帧，
- *     误判成了持续动画。后来把鼠标挪开、等足十秒稳定再取样，两次结果完全一致，
- *     才确认静止时它确实是不动的。）
- *
- * 实现上没有引 three.js —— 参考站那份是 r176，几百 KB。这个效果本质只是
- * 「每一行像素整体横移」，用 Canvas 2D 把字预渲染到离屏画布、逐条 drawImage
- * 回去就够了：先把字标画一次到离屏 canvas，之后每帧按固定高度切片重绘，
- * 每条给不同的 x 偏移。带数是 H / BAND，1080p 下约 40 次 drawImage / 帧，很轻。
- *
- * 完全静止时只重绘一次就停手，不空转 —— 移动端和低端机上这点很值。
+ * 实现：Canvas 2D。把字预渲染到离屏画布，再用「红/紫两色副本左右错开 + 墨色主字」
+ * 做色差分裂（source-in 染色）；爆发时叠加横向切片位移。带数 = H / BAND，很轻。
+ * 爆发间隔内的静止帧只画一次就停手，不空转 —— 移动端和低端机上这点很值。
  */
 
 const year = new Date().getFullYear()
@@ -43,29 +35,33 @@ const nav = [
 
 const BAND = 9 // 切片高度（CSS 像素），越小吃得越细碎
 const BAND_FREQ = 0.3 // 切片方向的相关性：越小，相邻切片越接近、错位越"成块"
-const AMP = 30 // 满强度时的基础位移幅度（像素）
+const AMP = 34 // 故障切片的最大横向错位（像素）
+const SPLIT = 16 // RGB 分裂的最大横向错位（像素）
+const SHAKE = 3 // 爆发时的整幅上下抖动（像素）
 const SPEED = 1.1 // 切片图案的演化速度
-const MOUSE_AMP = 70 // 光标横向位置带来的方向偏移幅度
-// 影响半径：只有光标上下这个距离之内的切片才会动。
-// 这是「经过哪里哪里动」的关键，调大就更接近整幅字一起扭。
-const MOUSE_REACH = 85
 
-// 位移由「移动强度」驱动，强度会随时间衰减。
-// 这两个值决定手感：DECAY 越小衰减越快，MOVE_SCALE 越小越容易打满。
-const ENERGY_DECAY = 0.1 // 强度每秒衰减到的倍数（0.1 ≈ 两秒内回到静止）
-const MOVE_SCALE = 240 // 指针累计移动多少像素，强度加满
+// 色差分裂的两路颜色。背景是青色（#6ee7ff），所以用红 + 紫：
+// 红色在青色上最跳，紫色是本站强调色，都比"青底 + 蓝字"这种同色系更出效果。
+const RGB_RED = '#ff3355'
+const RGB_VIOLET = '#8b5cf6'
 
-const MARK_MAX_W = 1600 // 画布最大宽度，与参考站一致
+// 爆发调度：多久爆发一次、持续多久
+const BURST_MIN = 0.26
+const BURST_MAX = 0.7
+const GAP_MIN = 1.6
+const GAP_MAX = 4.4
+
 const INK = '#06070d' // 字色 = --bg
 const BRAND = '#6ee7ff' // 底色 = --cyan
 
 // ---------------------------- 状态 ----------------------------
 
-const markRef = ref(null)
 const canvasRef = ref(null)
 
 let ctx = null
-let off = null // 离屏画布：整行字就渲染在这里
+let off = null // 离屏画布：墨色整行字
+let offRed = null // 红色副本（RGB 分裂用）
+let offViolet = null // 紫色副本（RGB 分裂用）
 let octx = null
 
 let w = 0
@@ -73,12 +69,13 @@ let h = 0
 let dpr = 1
 let raf = 0
 let startedAt = 0
-let lastFrame = 0
 
-const pointer = { x: -1e4, y: -1e4, ox: -1e4, oy: -1e4, lx: -1e4, ly: -1e4, active: false }
+let settled = true // 是否已经画完静止帧（爆发间隔不重复重绘）
 
-let energy = 0 // 移动强度 0~1：移动时累加，停下后指数衰减
-let settled = true // 是否已经画完静态帧（静止时不重复重绘）
+// 故障调度状态
+let burstStart = -10
+let burstEnd = -10
+let nextAt = 1.2
 
 // ---------------------------- 噪声 ----------------------------
 
@@ -89,48 +86,76 @@ function hash1(v, seed) {
 
 const smooth = (f) => f * f * (3 - 2 * f)
 
+// 一维值噪声 0~1，用于爆发期间的高频抖动
+function vnoise(x, seed) {
+  const i = Math.floor(x)
+  const f = smooth(x - i)
+  const a = hash1(i, seed)
+  const b = hash1(i + 1, seed)
+  return a * (1 - f) + b * f
+}
+
 /**
  * 第 i 条切片在时刻 t 的位移，返回 -1 ~ 1。
- *
- * 沿**切片方向**和**时间方向**都做平滑插值，而不是每条切片直接取一个随机数 ——
- * 这样相邻几条会共享接近的偏移，错位才是"成块的"。
- * 这一点很关键：每条各自乱跳的话，字会被打成一堆辨认不出的碎片；
- * 参考稿之所以仍能读出 TRAE，就是因为它的错位是成块的。
+ * 沿切片方向和时间方向都做平滑插值，错位才"成块"，而不是一堆碎片。
  */
 function bandNoise(i, t) {
   const ti = t * SPEED
   const t0 = Math.floor(ti)
   const tu = smooth(ti - t0)
-
   const fi = i * BAND_FREQ
   const f0 = Math.floor(fi)
   const fu = smooth(fi - f0)
-
   const v = (j, k) => hash1(j * 7.13 + k * 31.7, 3)
-
   const a = v(f0, t0) * (1 - fu) + v(f0 + 1, t0) * fu
   const b = v(f0, t0 + 1) * (1 - fu) + v(f0 + 1, t0 + 1) * fu
   return (a * (1 - tu) + b * tu) * 2 - 1
 }
 
+/**
+ * 故障强度 0~1：大部分时间为 0（正常字），偶尔爆发。
+ * 到点了就随机排下一次爆发；爆发内用正弦包络 × 高频抖动，让它像"乱码"。
+ */
+function glitchEnv(t) {
+  if (t >= nextAt) {
+    burstStart = t
+    burstEnd = t + BURST_MIN + Math.random() * (BURST_MAX - BURST_MIN)
+    nextAt = burstEnd + GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN)
+  }
+  if (t < burstStart || t > burstEnd) return 0
+  const p = (t - burstStart) / (burstEnd - burstStart)
+  const env = Math.sin(p * Math.PI)
+  const jitter = 0.6 + 0.4 * vnoise(t * 17, 11)
+  return env * jitter
+}
+
 // ---------------------------- 绘制 ----------------------------
+
+// 把墨色字染成单色副本（只染字形，透明区域不动）
+function tint(src, color) {
+  const c = document.createElement('canvas')
+  c.width = src.width
+  c.height = src.height
+  const g = c.getContext('2d')
+  g.drawImage(src, 0, 0)
+  g.globalCompositeOperation = 'source-in'
+  g.fillStyle = color
+  g.fillRect(0, 0, c.width, c.height)
+  return c
+}
 
 /** 把整行字标渲染到离屏画布；字号实测反推，保证刚好铺满一行 */
 function buildText() {
   const el = canvasRef.value
   if (!el) return
-
   dpr = Math.min(window.devicePixelRatio || 1, 2)
   w = el.clientWidth
   h = el.clientHeight
   if (!w || !h) return
-
   el.width = Math.round(w * dpr)
   el.height = Math.round(h * dpr)
   ctx = el.getContext('2d')
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-
-  // 改画布尺寸会把内容清空，所以后面必须重画一次
   settled = false
 
   off = document.createElement('canvas')
@@ -142,7 +167,6 @@ function buildText() {
 
   const family = "'NMNX Display', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif"
 
-  // 先量 100px 下这一行的宽度，再算出铺满画布需要的字号
   octx.font = `900 100px ${family}`
   const base = octx.measureText(MARK).width
   if (!base) return
@@ -153,6 +177,9 @@ function buildText() {
   octx.textBaseline = 'middle'
   octx.fillStyle = INK
   octx.fillText(MARK, w / 2, h / 2)
+
+  offRed = tint(off, RGB_RED)
+  offViolet = tint(off, RGB_VIOLET)
 }
 
 /** 原样铺一次（无位移），用于静止状态 */
@@ -162,12 +189,11 @@ function drawStill() {
   ctx.drawImage(off, 0, 0, Math.round(w * dpr), Math.round(h * dpr), 0, 0, w, h)
 }
 
-function draw(t, dt) {
-  // 强度指数衰减，约两秒内回到静止
-  energy *= Math.pow(ENERGY_DECAY, dt)
+function draw(t) {
+  const g = glitchEnv(t)
 
-  if (energy < 0.004) {
-    energy = 0
+  // 爆发间隔：只画一次静止帧就停手，不空转
+  if (g < 0.005) {
     if (!settled) {
       drawStill()
       settled = true
@@ -176,74 +202,38 @@ function draw(t, dt) {
   }
   settled = false
 
-  // 鼠标位置缓动一点，避免手抖直接反映到位移方向
-  pointer.ox += (pointer.x - pointer.ox) * 0.18
-  pointer.oy += (pointer.y - pointer.oy) * 0.18
-
-  // 光标横向位置决定整体往哪边推
-  const bias = pointer.active ? (pointer.ox - w / 2) / (w / 2) : 0
+  const shake = g * SHAKE
+  const split = g * SPLIT
+  const sw = Math.round(w * dpr)
+  const sh = Math.round(h * dpr)
 
   ctx.fillStyle = BRAND
   ctx.fillRect(0, 0, w, h)
 
-  const e = Math.min(1, energy)
-  const bands = Math.ceil(h / BAND)
-  const sw = Math.round(w * dpr)
+  // 色差分裂：红/紫两路左右错开，墨色主字压在中间
+  ctx.globalAlpha = g * 0.9
+  ctx.drawImage(offRed, 0, 0, sw, sh, -split, shake, w, h)
+  ctx.drawImage(offViolet, 0, 0, sw, sh, split, shake, w, h)
+  ctx.globalAlpha = 1
 
+  ctx.drawImage(off, 0, 0, sw, sh, 0, shake, w, h)
+
+  // 爆发期间叠加几条横向错位的故障切片
+  const bands = Math.ceil(h / BAND)
   for (let i = 0; i < bands; i++) {
     const y = i * BAND
     const bh = Math.min(BAND, h - y)
     if (bh <= 0) break
-
-    // 局部影响系数：只有光标附近那几条切片才会动。
-    // 这一项必须乘到**整个**位移上。之前只乘在附加项上，噪声主项仍按全局能量
-    // 放大，于是鼠标一经过，整幅字所有切片都各自扭起来 —— 看起来就是"全部乱动"，
-    // 而不是"经过哪里哪里动"。
-    // 影响范围之外 dx 保持 0，切片原样绘制，一个像素都不挪。
-    let dx = 0
-    if (pointer.active) {
-      const d = Math.abs(y + bh / 2 - pointer.oy) / MOUSE_REACH
-      if (d < 1) {
-        const g = (1 - d) * (1 - d) * e
-        dx = (bandNoise(i, t) * AMP + bias * MOUSE_AMP) * g
-      }
-    }
-
-    ctx.drawImage(off, 0, Math.round(y * dpr), sw, Math.round(bh * dpr), dx, y, w, bh)
+    const dx = bandNoise(i, t) * AMP * g
+    if (Math.abs(dx) < 0.6) continue
+    ctx.drawImage(off, 0, Math.round(y * dpr), sw, Math.round(bh * dpr), dx, y + shake, w, bh)
   }
 }
 
 function frame(now) {
   raf = requestAnimationFrame(frame)
-
   const t = (now - startedAt) * 0.001
-  const dt = lastFrame ? Math.min(0.1, (now - lastFrame) * 0.001) : 0.016
-  lastFrame = now
-
-  draw(t, dt)
-}
-
-function onPointerMove(e) {
-  const r = canvasRef.value.getBoundingClientRect()
-  pointer.x = e.clientX - r.left
-  pointer.y = e.clientY - r.top
-  pointer.active = true
-
-  // 按这一次移动的位移累加强度 —— 移动越快越猛，对应"跟着鼠标幅度走"
-  if (pointer.lx > -1e3) {
-    const d = Math.hypot(e.clientX - pointer.lx, e.clientY - pointer.ly)
-    energy = Math.min(1, energy + d / MOVE_SCALE)
-  }
-  pointer.lx = e.clientX
-  pointer.ly = e.clientY
-}
-
-function onPointerLeave() {
-  pointer.active = false
-  pointer.x = -1e4
-  pointer.y = -1e4
-  pointer.lx = -1e4
-  pointer.ly = -1e4
+  draw(t)
 }
 
 function onVisibility() {
@@ -251,7 +241,6 @@ function onVisibility() {
     cancelAnimationFrame(raf)
     raf = 0
   } else if (!raf) {
-    lastFrame = 0
     raf = requestAnimationFrame(frame)
   }
 }
@@ -277,14 +266,10 @@ onMounted(() => {
   drawStill()
   settled = true
 
-  // 字体换上来之后字宽会变，必须重测重画
   if (document.fonts?.ready) document.fonts.ready.then(rebuild)
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
   if (reduced) {
-    // 关掉动效时字标就是一张静态图，鼠标也不参与。
-    // 特意打一行日志，否则在页面上完全看不出是"被降级了"还是"写坏了"。
     console.info('[SiteFooter] 检测到 prefers-reduced-motion，字标保持静态。')
     return
   }
@@ -361,13 +346,8 @@ onBeforeUnmount(() => {
       激活码按账号、经纪商与有效期签发。
     </p>
 
-    <!-- 字标：鼠标在它上面移动时才产生横向切片位移 -->
-    <div
-      ref="markRef"
-      class="ftr__mark"
-      @pointermove="onPointerMove"
-      @pointerleave="onPointerLeave"
-    >
+    <!-- 字标：电子故障风（红紫色差 + 间歇爆发 + 切片错位） -->
+    <div class="ftr__mark">
       <div class="ftr__mark-inner">
         <canvas ref="canvasRef" class="ftr__canvas" />
       </div>
