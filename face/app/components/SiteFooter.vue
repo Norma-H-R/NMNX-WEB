@@ -45,8 +45,10 @@ const BAND = 9 // 切片高度（CSS 像素），越小吃得越细碎
 const BAND_FREQ = 0.3 // 切片方向的相关性：越小，相邻切片越接近、错位越"成块"
 const AMP = 30 // 满强度时的基础位移幅度（像素）
 const SPEED = 1.1 // 切片图案的演化速度
-const MOUSE_AMP = 70 // 鼠标横向位置带来的额外位移幅度
-const MOUSE_REACH = 150 // 鼠标影响的垂直半径（像素）
+const MOUSE_AMP = 70 // 光标横向位置带来的方向偏移幅度
+// 影响半径：只有光标上下这个距离之内的切片才会动。
+// 这是「经过哪里哪里动」的关键，调大就更接近整幅字一起扭。
+const MOUSE_REACH = 85
 
 // 位移由「移动强度」驱动，强度会随时间衰减。
 // 这两个值决定手感：DECAY 越小衰减越快，MOVE_SCALE 越小越容易打满。
@@ -193,14 +195,17 @@ function draw(t, dt) {
     const bh = Math.min(BAND, h - y)
     if (bh <= 0) break
 
-    let dx = bandNoise(i, t) * AMP * e
-
-    // 光标附近的切片被推得更狠，越远衰减越快
+    // 局部影响系数：只有光标附近那几条切片才会动。
+    // 这一项必须乘到**整个**位移上。之前只乘在附加项上，噪声主项仍按全局能量
+    // 放大，于是鼠标一经过，整幅字所有切片都各自扭起来 —— 看起来就是"全部乱动"，
+    // 而不是"经过哪里哪里动"。
+    // 影响范围之外 dx 保持 0，切片原样绘制，一个像素都不挪。
+    let dx = 0
     if (pointer.active) {
       const d = Math.abs(y + bh / 2 - pointer.oy) / MOUSE_REACH
       if (d < 1) {
-        const k = (1 - d) * (1 - d)
-        dx += bias * MOUSE_AMP * k * e
+        const g = (1 - d) * (1 - d) * e
+        dx = (bandNoise(i, t) * AMP + bias * MOUSE_AMP) * g
       }
     }
 
