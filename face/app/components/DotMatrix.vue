@@ -33,6 +33,12 @@ const ACCENT_RATIO = 0.45 // 强调色（青）占比，其余为白
 const MOUSE_R = 0.18 // 鼠标影响半径（UV）
 const MOUSE_K = 1.0 // 鼠标变色强度
 
+// 空间包络：点阵只占顶部一小块，向下渐隐。
+// 对齐参考站的实测结构（其点阵画布 741px 高、钉在 hero 区，点云集中上部），
+// 不是铺满全屏。ENV_LO 以下开始变稀，ENV_HI 以下完全消失（自顶向下的比例）。
+const ENV_LO = 0.3
+const ENV_HI = 0.7
+
 // 颜色与 main.css 的设计变量一致
 const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255] // --cyan
 const COL_WHITE = [1.0, 1.0, 1.0]
@@ -67,6 +73,8 @@ uniform vec2 uMouse;  // UV 坐标，y 向上
 #define ACCENT_RATIO ${ACCENT_RATIO.toFixed(4)}
 #define MOUSE_R ${MOUSE_R.toFixed(4)}
 #define MOUSE_K ${MOUSE_K.toFixed(2)}
+#define ENV_LO ${ENV_LO.toFixed(4)}
+#define ENV_HI ${ENV_HI.toFixed(4)}
 #define COL_ACCENT vec3(${COL_ACCENT.map((v) => v.toFixed(4)).join(',')})
 #define COL_WHITE vec3(${COL_WHITE.map((v) => v.toFixed(4)).join(',')})
 #define COL_BG vec3(${COL_BG.map((v) => v.toFixed(5)).join(',')})
@@ -123,6 +131,12 @@ void main() {
   flow.y *= 1.5; // 强化纵向
   vec2 suv = blockUV - flow * (FLOW_AMP / uRes);
   float val = fbm(suv * DENSITY + q * FREQUENCY);
+
+  // ---- 空间包络：只占顶部一小块，向下渐隐 ----
+  // 直接乘在 val 上而不是最后蒙版 —— 包络越弱点越稀，云是"散掉"的，
+  // 而不是整体透明度降低，这样边缘才有参考站那种逐渐消散的样子。
+  float yTop = 1.0 - uv.y; // 自顶向下 0→1（uv.y 自底向上）
+  val *= 1.0 - smoothstep(ENV_LO, ENV_HI, yTop);
 
   // ---- 阈值 + 每块随机抖动 ----
   float rnd = vhash(blockId + 7.0);
