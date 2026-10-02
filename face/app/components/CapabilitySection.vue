@@ -2,64 +2,108 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 /**
- * 能力区块 —— 按 Inspira UI「Design Testimonials」那套特效改写。
+ * 能力区块 —— 按 Inspira UI「Design Testimonials」的真实源码移植。
  *
- * 原组件是 Vue + Tailwind + motion-v，四个要素：
- *   1. cinematic typography  大字排版，重心落在文字本身
- *   2. magnetic parallax     鼠标移动时各层按不同幅度轻微跟随，产生纵深
- *   3. word-by-word          文本按单位错开入场，不是整块淡入
- *   4. auto-cycling nav      自动轮播 + 手动导航，悬停暂停
+ * 原组件（registry.inspira-ui.com/design-testimonials.json）依赖 motion-v + Tailwind，
+ * 本项目零依赖 + 手写 CSS，所以按它的结构一对一翻译，动效等价替换：
  *
- * 本项目零依赖、手写 CSS，所以不引 Tailwind/motion-v，按同样的行为自己实现：
- *   - 视差：指针在舞台内的归一化位置写进 --px/--py，各层用不同系数，位移交给
- *     CSS transition（不需要弹簧库）；
- *   - 逐字：中文没有词边界，按"字"拆（和首屏标题同一套 --i 错开延迟的写法）；
- *   - 轮播：换一条时用 :key 让整块重挂，入场动画自然重播，不需要 AnimatePresence。
+ *   原实现                                 这里
+ *   useMotionValue + useSpring(k200/c25)    手写同参数弹簧（半隐式欧拉积分）
+ *   useTransform([-200,200] → [-20,20])     同一个映射，超出夹紧
+ *   <AnimatePresence mode="wait">           <Transition mode="out-in"> + CSS 过渡
+ *   逐词 variants(delay i*0.05, rotateX90)  每个词一条 keyframes，靠 --i 错开
+ *   motion 的 infinite marquee              纯 CSS keyframes 跑马灯
  *
- * 自动轮播在两个条件之一下暂停，原因各不相同：
- *   - 鼠标悬停 / 键盘聚焦：用户在读，不该被切走；
- *   - 滚出视口：它在下面几个区块里偷偷切，用户滚回来会莫名其妙换了内容。
+ * 原组件的视觉重心是那个 6% 透明度的**超大序号**，磁性视差主要作用在它身上；
+ * 左侧竖排标题 + 竖向进度条、公司胶囊、大字引用 + 逐词翻转、作者行 + 展开线、
+ * 底部公司跑马灯，都照原样保留。
+ *
+ * 数据从原来三张卡片的文案改写成原组件的四段式：
+ *   quote   ← 描述（大字引用）      author ← 标题（主控 / 跟随端 / 授权）
+ *   company ← 首个标签（顶部胶囊）   role   ← 次个标签
  */
+
+const title = 'CAPABILITY' // 左侧竖排标题（原组件同名 prop，默认 "Testimonials"）
+const DURATION = 6000 // 自动切换间隔（原组件 duration 默认 6000）
+
 const items = [
   {
-    no: '01',
-    title: '主控',
-    desc: '负责信号判定、仓位管理与下单。所有决策逻辑集中在一处，便于回测与版本管理。',
-    tags: ['策略引擎', '风控内置'],
+    quote: '负责信号判定、仓位管理与下单。所有决策逻辑集中在一处，便于回测与版本管理。',
+    author: '主控',
+    role: '风控内置',
+    company: '策略引擎',
   },
   {
-    no: '02',
-    title: '跟随端',
-    desc: '通过命名管道直驱终端，跳过轮询与文件落地，把指令在毫秒级送达每一台机器。',
-    tags: ['命名管道', '多端同步'],
+    quote: '通过命名管道直驱终端，跳过轮询与文件落地，把指令在毫秒级送达每一台机器。',
+    author: '跟随端',
+    role: '多端同步',
+    company: '命名管道',
   },
   {
-    no: '03',
-    title: '授权',
-    desc: '离线激活码，绑定账号、经纪商与有效期。一次编译分发所有客户，按需发码即可。',
-    tags: ['离线校验', '按客户发码'],
+    quote: '离线激活码，绑定账号、经纪商与有效期。一次编译分发所有客户，按需发码即可。',
+    author: '授权',
+    role: '按客户发码',
+    company: '离线校验',
   },
 ]
 
-const CYCLE = 7000 // 自动轮播间隔（毫秒），够读完一段
-
 const active = ref(0)
 const cur = computed(() => items[active.value])
-const total = String(items.length).padStart(2, '0')
+const index = computed(() => String(active.value + 1).padStart(2, '0'))
+const progress = computed(() => `${((active.value + 1) / items.length) * 100}%`)
+const ticker = computed(() => items.map((t) => t.author).join(' • ') + ' • ')
 
-// 逐字入场：标题和正文都拆成单字，各自带 --i，CSS 用它算错开延迟。
-// 正文的序号接在标题后面，于是两段看起来是连续往下淌的。
-const titleChars = computed(() => [...cur.value.title])
-const descChars = computed(() => [...cur.value.desc])
+// 原组件是 quote.split(' ') —— 中文没有空格，改成按标点断句。
+// 断出来的每段仍带标点，正好是"逐词"的粒度：一次翻一个短句，不是翻一个字。
+const words = computed(() => cur.value.quote.split(/(?<=[，。、；：])/).filter(Boolean))
 
 // ---------------------------- 磁性视差 ----------------------------
+// 原组件：useSpring(mouseX, { damping: 25, stiffness: 200 })，
+// 再把 [-200, 200] 映射到 [-20, 20]（横向）/ [-10, 10]（纵向），超出夹紧。
+const K = 200
+const C = 25
 const stageRef = ref(null)
 
-function setShift(x, y) {
+const axis = { x: { cur: 0, vel: 0, tgt: 0 }, y: { cur: 0, vel: 0, tgt: 0 } }
+let raf = 0
+let last = 0
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
+
+function step(a, dt) {
+  // 半隐式欧拉：acc = (-k·x - c·v) / m
+  const acc = (-K * (a.cur - a.tgt) - C * a.vel) / 1
+  a.vel += acc * dt
+  a.cur += a.vel * dt
+}
+
+function frame(now) {
+  raf = 0
+  const dt = Math.min((now - last) / 1000, 0.05) || 0.016
+  last = now
+  step(axis.x, dt)
+  step(axis.y, dt)
+
   const el = stageRef.value
-  if (!el) return
-  el.style.setProperty('--px', x.toFixed(3))
-  el.style.setProperty('--py', y.toFixed(3))
+  if (el) {
+    // 原映射：sprung 值 / 200 * 20（纵向 * 10），夹紧到 ±20 / ±10
+    el.style.setProperty('--num-x', `${clamp((axis.x.cur / 200) * 20, -20, 20).toFixed(2)}px`)
+    el.style.setProperty('--num-y', `${clamp((axis.y.cur / 200) * 10, -10, 10).toFixed(2)}px`)
+  }
+
+  // 还没停就继续跑；静止后自动收手，不空转
+  const moving =
+    Math.abs(axis.x.cur - axis.x.tgt) > 0.2 ||
+    Math.abs(axis.x.vel) > 0.2 ||
+    Math.abs(axis.y.cur - axis.y.tgt) > 0.2 ||
+    Math.abs(axis.y.vel) > 0.2
+  if (moving) raf = requestAnimationFrame(frame)
+}
+
+function kick() {
+  if (raf || reduce.value) return
+  last = performance.now()
+  raf = requestAnimationFrame(frame)
 }
 
 function onMove(e) {
@@ -67,19 +111,26 @@ function onMove(e) {
   if (!el) return
   const r = el.getBoundingClientRect()
   if (!r.width || !r.height) return
-  // 归一化到 -1 ~ 1，原点取舞台中心
-  setShift(((e.clientX - r.left) / r.width) * 2 - 1, ((e.clientY - r.top) / r.height) * 2 - 1)
+  // 原组件以容器中心为原点，存的是像素偏移（不是归一化值）
+  axis.x.tgt = e.clientX - (r.left + r.width / 2)
+  axis.y.tgt = e.clientY - (r.top + r.height / 2)
+  kick()
 }
 
 function onLeave() {
   paused.value = false
-  setShift(0, 0) // 指针离开要把位移归零，否则各层会永久停在偏移位
+  axis.x.tgt = 0
+  axis.y.tgt = 0
+  kick()
 }
 
-// ---------------------------- 轮播 ----------------------------
+// ---------------------------- 自动轮播 ----------------------------
+// 原组件只有 setInterval(goNext, duration)。这里多两条暂停条件：
+//   悬停/聚焦 —— 鼠标在块上往往正是在看，不该被切走；
+//   滚出视口 —— 否则它在下面几个区块里偷偷切，用户滚回来会莫名换了内容。
 const paused = ref(false)
-const seen = ref(false) // 进过一次视口 —— 入场动画与轮播都以它为前提
-const safe = ref(false) // 兜底放行：只让文字可见，不播动画
+const live = ref(false)
+const reduce = ref(false)
 let timer = 0
 let fallback = 0
 let io = null
@@ -87,9 +138,9 @@ let io = null
 function schedule() {
   clearTimeout(timer)
   timer = window.setTimeout(() => {
-    if (seen.value && !paused.value) active.value = (active.value + 1) % items.length
+    if (live.value && !paused.value) active.value = (active.value + 1) % items.length
     schedule()
-  }, CYCLE)
+  }, DURATION)
 }
 
 function go(step) {
@@ -97,38 +148,30 @@ function go(step) {
   schedule()
 }
 
-function pick(i) {
-  active.value = i
-  schedule()
-}
-
 onMounted(() => {
-  // 没有 IntersectionObserver 就直接放行，别把文字锁在 opacity:0
+  reduce.value = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
   if (typeof IntersectionObserver === 'undefined') {
-    seen.value = true
+    live.value = true
   } else {
     io = new IntersectionObserver(
       (entries) => {
         const hit = entries[entries.length - 1].isIntersecting
-        if (hit) seen.value = true
+        if (hit) live.value = true
         paused.value = !hit
       },
-      { threshold: 0.25 },
+      { threshold: 0.2 },
     )
     if (stageRef.value) io.observe(stageRef.value)
   }
-  // 兜底：万一观察器始终不触发（布局异常等），2.5s 后先把文字放出来，
-  // 否则会一直停在 opacity:0。
-  // 注意这里只置 safe（可见、不播动画），不置 seen —— 如果兜底直接播了入场动画，
-  // 它在屏幕外就播完了，用户滚下来时只会看到静止的一帧，逐字入场等于白做。
-  // 真的滚到时观察器再置 seen，动画从隐藏态正常播。
-  fallback = window.setTimeout(() => (safe.value = true), 2500)
+
   schedule()
 })
 
 onBeforeUnmount(() => {
   clearTimeout(timer)
   clearTimeout(fallback)
+  if (raf) cancelAnimationFrame(raf)
   if (io) io.disconnect()
 })
 </script>
@@ -143,62 +186,95 @@ onBeforeUnmount(() => {
 
       <div
         ref="stageRef"
-        class="cap__stage"
-        :class="{ 'is-live': seen, 'is-safe': safe }"
-        @pointermove="onMove"
+        class="dt"
+        @mousemove="onMove"
         @pointerenter="paused = true"
         @pointerleave="onLeave"
         @focusin="paused = true"
         @focusout="paused = false"
       >
-        <!-- :key 绑 active —— 换一条时整块重挂，逐字入场自然重播 -->
-        <div :key="active" class="cap__slide">
-          <p class="cap__idx">
-            <span class="cap__no">{{ cur.no }}</span>
-            <span class="cap__total">/ {{ total }}</span>
-          </p>
-
-          <h3 class="cap__big" :aria-label="cur.title">
-            <span
-              v-for="(c, i) in titleChars"
-              :key="`t${i}`"
-              class="cap__ch"
-              :style="{ '--i': i }"
-              aria-hidden="true"
-            >{{ c }}</span>
-          </h3>
-
-          <p class="cap__quote">
-            <span
-              v-for="(c, i) in descChars"
-              :key="`d${i}`"
-              class="cap__ch"
-              :style="{ '--i': i + titleChars.length + 3 }"
-            >{{ c }}</span>
-          </p>
-
-          <ul class="cap__tags">
-            <li v-for="t in cur.tags" :key="t">{{ t }}</li>
-          </ul>
+        <!-- 超大序号：6% 透明度，磁性视差作用在它身上 -->
+        <div class="dt__num" aria-hidden="true">
+          <Transition name="dt-num" mode="out-in">
+            <span :key="active" class="dt__num-in">{{ index }}</span>
+          </Transition>
         </div>
 
-        <div class="cap__nav">
-          <button type="button" class="cap__arrow" aria-label="上一项" @click="go(-1)">←</button>
-
-          <div class="cap__dots">
-            <button
-              v-for="(it, i) in items"
-              :key="it.no"
-              type="button"
-              class="cap__dot"
-              :class="{ 'is-on': i === active }"
-              :aria-label="`第 ${i + 1} 项：${it.title}`"
-              :aria-current="i === active"
-              @click="pick(i)"
-            />
+        <div class="dt__row">
+          <!-- 左列：竖排标题 + 竖向进度条 -->
+          <div class="dt__side">
+            <span class="dt__side-title">{{ title }}</span>
+            <div class="dt__bar">
+              <div class="dt__bar-fill" :style="{ height: progress }" />
+            </div>
           </div>
 
-          <button type="button" class="cap__arrow" aria-label="下一项" @click="go(1)">→</button>
+          <!-- 主内容 -->
+          <div class="dt__main">
+            <Transition name="dt-pill" mode="out-in">
+              <div :key="active" class="dt__pillwrap">
+                <span class="dt__pill">
+                  <span class="dt__dot" />
+                  {{ cur.company }}
+                </span>
+              </div>
+            </Transition>
+
+            <Transition name="dt-quote" mode="out-in">
+              <blockquote :key="active" class="dt__quote">
+                <span
+                  v-for="(w, i) in words"
+                  :key="`${active}-${i}`"
+                  class="dt__word"
+                  :style="{ '--i': i }"
+                >{{ w }}</span>
+              </blockquote>
+            </Transition>
+
+            <div class="dt__foot">
+              <Transition name="dt-author" mode="out-in">
+                <div :key="active" class="dt__author">
+                  <span class="dt__author-line" />
+                  <span class="dt__author-text">
+                    <span class="dt__author-name">{{ cur.author }}</span>
+                    <span class="dt__author-role">{{ cur.role }}</span>
+                  </span>
+                </div>
+              </Transition>
+
+              <div class="dt__nav">
+                <button type="button" class="dt__arrow" aria-label="上一项" @click="go(-1)">
+                  <svg viewBox="0 0 16 16" width="18" height="18" fill="none">
+                    <path
+                      d="M10 12L6 8L10 4"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+                <button type="button" class="dt__arrow" aria-label="下一项" @click="go(1)">
+                  <svg viewBox="0 0 16 16" width="18" height="18" fill="none">
+                    <path
+                      d="M6 4L10 8L6 12"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部跑马灯 -->
+        <div class="dt__ticker" aria-hidden="true">
+          <div class="dt__ticker-track">
+            <span v-for="n in 2" :key="n">{{ ticker }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -210,194 +286,363 @@ onBeforeUnmount(() => {
   max-width: 640px;
 }
 
-/* 舞台：一条上边线 + 底部导航。视差的三个层级都挂在它下面的 --px/--py 上 */
-.cap__stage {
-  --px: 0;
-  --py: 0;
+/* 舞台：原组件是 min-h-screen 居中，这里收成一个区块，留出足够高度放那个大数字 */
+.dt {
+  --num-x: 0px;
+  --num-y: 0px;
   position: relative;
-  margin-top: clamp(48px, 7vw, 84px);
-  padding-top: clamp(28px, 3.4vw, 46px);
+  margin-top: clamp(44px, 6vw, 76px);
+  padding: clamp(40px, 5vw, 72px) 0 clamp(96px, 10vw, 132px);
   border-top: 1px solid var(--line);
+  overflow: hidden;
 }
 
-/* 换一条时舞台高度不要跳 */
-.cap__slide {
-  min-height: clamp(230px, 24vw, 286px);
+/* ---------------------------- 超大序号 ---------------------------- */
+.dt__num {
+  position: absolute;
+  top: 44%;
+  left: -10px;
+  z-index: 0;
+  transform: translate3d(var(--num-x), calc(-50% + var(--num-y)), 0);
+  pointer-events: none;
+  user-select: none;
 }
 
-/* 视差：外层整体跟随，内层反向一点，拉开纵深；位移量都很小，是"磁吸"不是"甩动" */
-.cap__idx,
-.cap__big,
-.cap__quote,
-.cap__tags {
-  transition: transform 0.7s var(--ease);
+.dt__num-in {
+  display: block;
+  font-size: clamp(160px, 24vw, 380px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.06em;
+  color: rgba(255, 255, 255, 0.06); /* 原组件 text-foreground/6 */
 }
 
-.cap__idx {
+/* ---------------------------- 两列布局 ---------------------------- */
+.dt__row {
+  position: relative;
+  z-index: 1;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  transform: translate3d(calc(var(--px) * 10px), calc(var(--py) * 6px), 0);
+  padding-left: clamp(20px, 3vw, 44px);
 }
 
-.cap__no {
-  font-size: 12px;
-  letter-spacing: 0.3em;
+.dt__side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-right: clamp(20px, 3.4vw, 54px);
+  border-right: 1px solid var(--line);
+}
+
+.dt__side-title {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.cap__total {
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  color: var(--line-strong);
+.dt__bar {
+  position: relative;
+  width: 1px;
+  height: 128px;
+  margin-top: 32px;
+  background: var(--line-strong);
 }
 
-.cap__big {
-  margin-top: clamp(18px, 2.4vw, 30px);
-  font-size: clamp(38px, 6.4vw, 96px);
-  font-weight: 500;
-  line-height: 1.06;
-  letter-spacing: 0.02em;
-  color: #fff;
-  transform: translate3d(calc(var(--px) * -7px), calc(var(--py) * -5px), 0);
+.dt__bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  transform-origin: top;
+  background: var(--cyan);
+  transition: height 0.5s var(--ease);
 }
 
-.cap__quote {
-  margin-top: clamp(16px, 2vw, 26px);
-  max-width: 34ch;
-  font-size: clamp(16px, 1.5vw, 22px);
-  line-height: 1.9;
+.dt__main {
+  flex: 1;
+  min-width: 0;
+  padding: clamp(8px, 1.4vw, 20px) 0 clamp(8px, 1.4vw, 20px) clamp(22px, 3.6vw, 58px);
+}
+
+/* ---------------------------- 公司胶囊 ---------------------------- */
+.dt__pillwrap {
+  margin-bottom: clamp(22px, 3vw, 34px);
+}
+
+.dt__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 99px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
   color: var(--text-dim);
-  transform: translate3d(calc(var(--px) * 5px), calc(var(--py) * 3px), 0);
 }
 
-/* 逐字入场。默认 opacity:0，进过视口（.is-live）才开始播；
-   换一条时整块重挂，动画自然重播 —— 这就是"逐词动画"那一层的做法。 */
-.cap__ch {
+.dt__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--cyan);
+}
+
+/* ---------------------------- 大字引用 ---------------------------- */
+.dt__quote {
+  margin: 0 0 clamp(34px, 4vw, 54px);
+  min-height: clamp(120px, 14vw, 176px);
+  font-size: clamp(26px, 3.4vw, 46px);
+  font-weight: 300;
+  line-height: 1.2;
+  letter-spacing: 0.005em;
+  color: var(--text);
+  /* 让逐词翻转有透视，不然 rotateX 只会压扁而看不出翻 */
+  perspective: 620px;
+}
+
+.dt__word {
   display: inline-block;
-  opacity: 0;
 }
 
-/* 兜底：观察器没触发时至少让文字可见（不播动画，免得在屏幕外白闪一下） */
-.cap__stage.is-safe .cap__ch {
-  opacity: 1;
+/* 逐词入场：原组件 delay i*0.05、y 20、rotateX 90 */
+.dt-quote-enter-active .dt__word {
+  animation: dt-word 0.5s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 0.05s);
 }
 
-/* 真的进过视口才播逐字入场。这条必须排在 .is-safe 之后 —— 两处同权重、后者胜出，
-   于是即便兜底已经把文字放出来，用户滚到时入场动画照样从头播。 */
-.cap__stage.is-live .cap__ch {
-  animation: cap-in 0.72s var(--ease) both;
-  animation-delay: calc(var(--i, 0) * 0.016s);
-}
-
-@keyframes cap-in {
+@keyframes dt-word {
   from {
     opacity: 0;
-    transform: translateY(0.42em);
+    transform: translateY(20px) rotateX(90deg);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) rotateX(0);
   }
 }
 
-.cap__tags {
+/* ---------------------------- 作者行 + 导航 ---------------------------- */
+.dt__foot {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: clamp(26px, 3vw, 38px) 0 0;
-  padding: 0;
-  list-style: none;
-  transform: translate3d(calc(var(--px) * 3px), calc(var(--py) * 2px), 0);
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
 }
 
-.cap__tags li {
-  padding: 5px 13px;
-  border: 1px solid var(--line);
-  border-radius: 99px;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  transition: color 0.4s var(--ease), border-color 0.4s var(--ease);
-}
-
-.cap__stage:hover .cap__tags li {
-  color: var(--text-dim);
-  border-color: var(--line-strong);
-}
-
-/* ---------------------------- 底部导航 ---------------------------- */
-.cap__nav {
+.dt__author {
   display: flex;
   align-items: center;
-  gap: 20px;
-  margin-top: clamp(30px, 3.6vw, 46px);
+  gap: 16px;
 }
 
-.cap__arrow {
-  width: 42px;
-  height: 42px;
+.dt__author-line {
+  display: block;
+  width: 32px;
+  height: 1px;
+  background: var(--text);
+  transform-origin: left;
+}
+
+.dt-author-enter-active .dt__author-line {
+  animation: dt-line 0.6s var(--ease) 0.3s both;
+}
+
+@keyframes dt-line {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.dt__author-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.dt__author-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.dt__author-role {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+.dt__nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.dt__arrow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
   padding: 0;
   border: 1px solid var(--line-strong);
   border-radius: 99px;
   background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 14px;
-  cursor: pointer;
-  transition: color 0.35s var(--ease), border-color 0.35s var(--ease), transform 0.35s var(--ease);
-}
-
-.cap__arrow:hover {
   color: var(--text);
-  border-color: var(--text-dim);
+  cursor: pointer;
+  overflow: hidden;
+  transition: color 0.35s var(--ease), border-color 0.35s var(--ease), transform 0.2s var(--ease);
 }
 
-.cap__arrow:active {
+/* 原组件那个从侧向滑入的填充层：这里用 ::before 平移实现 */
+.dt__arrow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--cyan);
+  transform: scaleX(0);
+  transition: transform 0.4s var(--ease);
+}
+
+.dt__arrow:hover::before {
+  transform: scaleX(1);
+}
+
+.dt__arrow:hover {
+  color: #06070d;
+  border-color: var(--cyan);
+}
+
+.dt__arrow:active {
   transform: scale(0.94);
 }
 
-.cap__dots {
+.dt__arrow svg {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------------------------- 底部跑马灯 ---------------------------- */
+.dt__ticker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: clamp(-30px, -2vw, -10px);
+  overflow: hidden;
+  opacity: 0.08;
+  pointer-events: none;
+}
+
+.dt__ticker-track {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  white-space: nowrap;
+  font-size: clamp(34px, 4.4vw, 62px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  animation: dt-ticker 20s linear infinite;
 }
 
-.cap__dot {
-  width: 26px;
-  height: 2px;
-  padding: 0;
-  border: 0;
-  border-radius: 2px;
-  background: var(--line-strong);
-  cursor: pointer;
-  transition: width 0.5s var(--ease), background 0.5s var(--ease);
+.dt__ticker-track span {
+  padding-right: 0.6em;
 }
 
-.cap__dot.is-on {
-  width: 48px;
-  background: var(--cyan);
+@keyframes dt-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* ---------------------------- 过渡（对应 AnimatePresence mode="wait"）--------------------------- */
+.dt-num-enter-active,
+.dt-num-leave-active {
+  transition: opacity 0.6s var(--ease), transform 0.6s var(--ease), filter 0.6s var(--ease);
+}
+.dt-num-enter-from {
+  opacity: 0;
+  transform: scale(0.8);
+  filter: blur(10px);
+}
+.dt-num-leave-to {
+  opacity: 0;
+  transform: scale(1.1);
+  filter: blur(10px);
+}
+
+.dt-pill-enter-active,
+.dt-pill-leave-active {
+  transition: opacity 0.4s var(--ease), transform 0.4s var(--ease);
+}
+.dt-pill-enter-from {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+.dt-pill-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.dt-quote-leave-active {
+  transition: opacity 0.2s var(--ease);
+}
+.dt-quote-leave-to {
+  opacity: 0;
+}
+
+.dt-author-enter-active {
+  transition: opacity 0.4s var(--ease) 0.2s, transform 0.4s var(--ease) 0.2s;
+}
+.dt-author-enter-from {
+  opacity: 0;
+  transform: translateY(20px);
+}
+.dt-author-leave-active {
+  transition: opacity 0.3s var(--ease);
+}
+.dt-author-leave-to {
+  opacity: 0;
+  transform: translateY(-20px);
+}
+
+/* ---------------------------- 响应式与降级 ---------------------------- */
+@media (max-width: 860px) {
+  .dt__side {
+    display: none;
+  }
+  .dt__row {
+    padding-left: 0;
+  }
+  .dt__main {
+    padding-left: 0;
+  }
+  .dt__num {
+    left: -6px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cap__ch {
-    opacity: 1;
+  .dt__num {
+    transform: translateY(-50%);
   }
-  .cap__stage.is-live .cap__ch {
+  .dt-quote-enter-active .dt__word,
+  .dt-author-enter-active .dt__author-line {
     animation: none;
   }
-  .cap__idx,
-  .cap__big,
-  .cap__quote,
-  .cap__tags {
-    transform: none;
-    transition: none;
+  .dt__word {
+    opacity: 1;
   }
-}
-
-@media (max-width: 940px) {
-  .cap__slide {
-    min-height: 0;
+  .dt__ticker-track {
+    animation: none;
   }
 }
 </style>
