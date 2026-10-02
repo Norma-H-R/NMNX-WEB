@@ -149,7 +149,13 @@ function onLeave() {
 // 否则滚动里每帧都要白跑一遍组件渲染。
 const TEXT_TRAVEL = 16 // 文字列行程(px)，取负方向
 const MEDIA_TRAVEL = 26 // 图片列行程(px)
-const ENTER_SPAN = 0.6 // 走完进入段的多大比例就算入场完成（0.6 → 走 60% 时已完全显现）
+// 入场分两段走：淡入早点完成，放大走满整段进入行程。
+// 放大走满不只是观感 —— 图片以中心为原点缩小，顶边会随之下移，恰好抵消视差把图片上推的
+// 量（起始 0.8 时下移约 0.1H，视差上推最多 42px，图片高 H ≥ 420px 即恒成立），
+// 于是"图片顶边不越过胶囊顶边"在整段滚动过程中都成立。
+const ENTER_FADE = 0.6
+const ENTER_GROW = 1.0
+const SCALE_FROM = 0.8
 
 let sraf = 0
 
@@ -162,11 +168,12 @@ function applyScroll() {
   // p: -1 = 整段还在视口下方，0 = 与视口居中，1 = 整段已越过视口
   const raw = (vh / 2 - (r.top + r.height / 2)) / ((vh + r.height) / 2 || 1)
   const p = raw < -1 ? -1 : raw > 1 ? 1 : raw
-  const enter = Math.max(0, Math.min(1, (p + 1) / ENTER_SPAN))
+  const fade = Math.max(0, Math.min(1, (p + 1) / ENTER_FADE))
+  const grow = Math.max(0, Math.min(1, (p + 1) / ENTER_GROW))
   el.style.setProperty('--cap-text-y', `${(-TEXT_TRAVEL * p).toFixed(2)}px`)
   el.style.setProperty('--cap-media-y', `${(MEDIA_TRAVEL * p).toFixed(2)}px`)
-  el.style.setProperty('--cap-media-o', enter.toFixed(3))
-  el.style.setProperty('--cap-media-s', (0.88 + 0.12 * enter).toFixed(4))
+  el.style.setProperty('--cap-media-o', fade.toFixed(3))
+  el.style.setProperty('--cap-media-s', (SCALE_FROM + (1 - SCALE_FROM) * grow).toFixed(4))
 }
 
 function onScroll() {
@@ -398,7 +405,8 @@ onBeforeUnmount(() => {
 
 .dt__num-in {
   display: block;
-  font-size: clamp(160px, 24vw, 380px);
+  /* 24vw → 30vw：放大一档，作为底纹的体量够了；上限同步抬到 460px */
+  font-size: clamp(180px, 30vw, 460px);
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.06em;
@@ -414,7 +422,10 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.86fr);
   gap: clamp(24px, 3.2vw, 52px);
-  align-items: center;
+  /* 顶部对齐，不再垂直居中：图片比文字栏高，居中会让它的顶边蹿到胶囊上方约 80px。
+     两列各自偏移同一个 --dt-top，图片顶边因此与胶囊顶边严格齐平。 */
+  align-items: start;
+  --dt-top: clamp(6px, 1vw, 14px);
   padding-left: clamp(20px, 3vw, 44px);
 }
 
@@ -423,6 +434,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* 细轨仍与整行垂直居中（它不参与上面的顶部对齐） */
+  align-self: center;
   border-right: 1px solid var(--line);
 }
 
@@ -456,8 +469,9 @@ onBeforeUnmount(() => {
 
 .dt__main {
   min-width: 0;
-  /* 左右留白交给 .dt__row 的列间距，这里只留上下 */
-  padding: clamp(8px, 1.4vw, 20px) 0;
+  /* 左右留白交给 .dt__row 的列间距；上边距与图片共用 --dt-top，两者顶边才齐。
+     数值由原来的 clamp(8px,1.4vw,20px) 收到 clamp(6px,1vw,14px) —— 胶囊随之略微上提。 */
+  padding: var(--dt-top) 0;
   /* 滚动视差：与图片列反向位移（脚本写 --cap-text-y） */
   transform: translate3d(0, var(--cap-text-y, 0px), 0);
   will-change: transform;
@@ -469,6 +483,8 @@ onBeforeUnmount(() => {
    img              只在换图时缩放一次（见下方 .dt-media-* 过渡） */
 .dt__media {
   position: relative;
+  /* 与 .dt__main 的上边距取同一个值 → 图片顶边 = 公司胶囊顶边 */
+  margin-top: var(--dt-top);
 }
 
 .dt__media-move {
@@ -513,6 +529,10 @@ onBeforeUnmount(() => {
 
 /* ---------------------------- 公司胶囊 ---------------------------- */
 .dt__pillwrap {
+  /* flex 而不是默认的块级：胶囊是 inline-flex，落在块级行盒里会按基线对齐，
+     顶部多出约 1px 的半行距 —— 那 1px 会让它比图片顶边低一点。
+     改成 flex 后胶囊成为弹性项，顶边就是容器顶边，与图片严格齐平。 */
+  display: flex;
   margin-bottom: clamp(22px, 3vw, 34px);
 }
 
