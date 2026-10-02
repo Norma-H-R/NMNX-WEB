@@ -45,7 +45,10 @@ const FLOW_AMP = 35 // 采样点被流场推开的幅度（像素）：原版 ×
 // 改流体参数或配色后必须重新标。
 const THRESHOLD = 0.705
 const JITTER = 0.08 // 每块阈值随机量：原版就是 0.08，必须小
-const ACCENT_RATIO = 0.49 // 强调色占比：原版 e1GreenRatio = 0.49
+// 强调色（蓝）占比。原版 e1GreenRatio = 0.49，这里按"蓝色再少 35%"往下调：
+// 0.49 × 0.65 ≈ 0.3185。蓝白走的是同一个 randCol 与同一个阈值，所以这就是纯粹的
+// 数量比例，调它不会让蓝点变暗、也不会改变疏密。
+const ACCENT_RATIO = 0.3185
 
 // 蓝/白颜色随时间重掷的速率（每格相位错开，不是整屏同步闪）。
 // 0 = 颜色只跟着云流、永不重掷；调大 = 蓝白换得更勤。
@@ -247,7 +250,11 @@ void main() {
   float rt = time * COLOR_RATE + e1Random(cellId + 0.5) * 37.0;
   float rc0 = e1Random(cellId + vec2(floor(rt), 0.0));
   float rc1 = e1Random(cellId + vec2(floor(rt) + 1.0, 0.0));
-  float randCol = mix(rc0, rc1, fract(rt));
+  // 硬切换，不做插值：rc0/rc1 本身是均匀分布，直接切换后取值依然均匀，
+  // ACCENT_RATIO 才能线性对应到实际蓝点占比。
+  // （用 mix 插值会把分布压向 0.5 —— 实测 ACCENT_RATIO=0.3185 只出 25.6% 蓝点，
+  //  比设定少了 6 个百分点。换色节奏不受影响，仍然是每格约 1/COLOR_RATE 秒一次。）
+  float randCol = fract(rt) < 0.5 ? rc0 : rc1;
 
   float dynamicThreshold = THRESHOLD - JITTER * randJit;
 
