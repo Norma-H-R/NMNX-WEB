@@ -18,14 +18,19 @@ onMounted(() => {
 
   <SiteHeader />
 
+  <!--
+    页面骨架：这里只按顺序摆区块，不写任何区块内部的布局或样式。
+    改某一块（文案 / 样式 / 交互）请直接改对应组件文件：
+      HeroBlock.vue        首屏：点阵画布 + 标题文案 + 磨砂黑层
+      AboutSection.vue     关于
+      CapabilitySection.vue 能力
+      ContactSection.vue   联系
+      SiteHeader.vue       页头（含液态玻璃折射滤镜）
+      SiteFooter.vue       页脚（含故障风字标）
+    组件由 Nuxt 自动导入，不必在这里 import。
+  -->
   <main>
-    <!-- 点阵只铺在 hero 这一块，随页面一起滚走。
-         对齐参考站实测结构：它的点阵画布尺寸与该 hero 区块完全一致
-         （1424x741 @ top 64），是 absolute 覆盖层，不是全屏 fixed 背景。 -->
-    <div class="hero-bg">
-      <DotMatrix />
-      <HeroSection />
-    </div>
+    <HeroBlock />
 
     <AboutSection />
     <CapabilitySection />
@@ -39,14 +44,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 骨架层自己的定位：页面内容整体压在点阵/噪点之上 */
 main {
   position: relative;
   z-index: 1;
-}
-
-/* 点阵的定位基准：高度即 hero 高度 */
-.hero-bg {
-  position: relative;
-  isolation: isolate;
 }
 </style>
