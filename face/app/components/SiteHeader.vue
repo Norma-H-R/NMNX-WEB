@@ -22,7 +22,11 @@ function apply() {
   const y = window.scrollY
   solid.value = y > 24
   const el = headerRef.value
-  if (el) el.style.setProperty('--hdr-p', Math.min(1, y / 140).toFixed(3))
+  if (!el) return
+  // 底衬浓度：很短的斜坡就够了
+  el.style.setProperty('--hdr-p', Math.min(1, y / 140).toFixed(3))
+  // 收窄进度：滚满一屏（也就是到第二屏）时正好 1 → 宽度收到 60%，即窄了 40%
+  el.style.setProperty('--hdr-narrow', Math.min(1, y / (window.innerHeight || 1)).toFixed(3))
 }
 
 function onScroll() {
@@ -89,17 +93,22 @@ function syncLens() {
   el.style.setProperty('--hdr-lens', 'url(#hdrLens)')
 }
 
+function onResize() {
+  syncLens()
+  apply() // 收窄进度是按视口高算的，视口一变要重算
+}
+
 onMounted(() => {
   apply()
   syncLens()
   window.addEventListener('scroll', onScroll, { passive: true })
-  window.addEventListener('resize', syncLens, { passive: true })
+  window.addEventListener('resize', onResize, { passive: true })
 })
 
 onBeforeUnmount(() => {
   if (raf) cancelAnimationFrame(raf)
   window.removeEventListener('scroll', onScroll)
-  window.removeEventListener('resize', syncLens)
+  window.removeEventListener('resize', onResize)
 })
 </script>
 
@@ -162,8 +171,9 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid transparent;
 }
 
+/* 收窄之后整条只剩中间那颗胶囊，通栏的底边线就没意义了，跟着一起淡出 */
 .hdr.is-solid {
-  border-bottom-color: var(--line);
+  border-bottom-color: rgba(255, 255, 255, calc(0.14 * (1 - var(--hdr-narrow, 0))));
 }
 
 .hdr__defs {
@@ -180,14 +190,16 @@ onBeforeUnmount(() => {
   gap: 24px;
   height: 76px;
 
-  /* 通铺整屏宽：跳出 .container 的 1180px 居中约束。
-     但内容仍对齐页面栅格 —— 左右内边距取 max(gutter, (100% - 1180px) / 2)：
-     宽屏时等于居中留白（和其它区块正文的左边缘在一起），窄屏时退回普通 gutter。
-     不写断点，天然自适应。 */
-  width: 100%;
+  /* 首屏通铺整屏宽、留白与下方各区一致（--pad）；
+     往下滚满一屏的过程中，条本身收窄到 60%（= 窄了 40%）并居中，收成一颗粒子玻璃胶囊。
+     width / padding / 圆角三者都由 --hdr-narrow（0→1，脚本按 scrollY ÷ 视口高 写）驱动：
+     内边距同步收小，否则条变窄后文字会被挤出去。 */
+  width: calc(100% - var(--hdr-narrow, 0) * 40%);
   max-width: none;
-  padding-left: max(var(--gutter), calc((100% - var(--maxw)) / 2));
-  padding-right: max(var(--gutter), calc((100% - var(--maxw)) / 2));
+  margin: 0 auto;
+  padding-left: calc(var(--pad) - (var(--pad) - 28px) * var(--hdr-narrow, 0));
+  padding-right: calc(var(--pad) - (var(--pad) - 28px) * var(--hdr-narrow, 0));
+  border-radius: calc(var(--hdr-narrow, 0) * 18px);
 
   /* 常驻底衬：首屏的点阵会从这一条打穿、压着品牌名与导航文字，没有底衬读不清。
      浓度由 --hdr-p 连续插值（静止 0.30/6px → 滚开 0.72/16px），只此一层。

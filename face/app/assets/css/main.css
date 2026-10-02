@@ -63,6 +63,9 @@
 
   --maxw: 1180px;
   --gutter: clamp(20px, 5vw, 56px);
+  /* 首屏下方各区通铺整屏后的左右留白。
+     不再收窄到 1180px，留白就成了唯一的呼吸空间，所以比 --gutter 给得大一些。 */
+  --pad: clamp(24px, 5.5vw, 92px);
 
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
@@ -146,9 +149,11 @@ img {
 
 .container {
   width: 100%;
-  max-width: var(--maxw);
+  /* 释放到全宽：首屏下方各区（理念 / 能力 / 联系 / 页脚）都不再收窄到 1180px，
+     只剩左右留白。首屏 hero 与页头自己覆写了这组属性，不受影响。 */
+  max-width: none;
   margin: 0 auto;
-  padding: 0 var(--gutter);
+  padding: 0 var(--pad);
 }
 
 .section {
