@@ -291,24 +291,8 @@ onBeforeUnmount(() => {
 
 <template>
   <footer class="ftr">
-    <!-- 收尾 CTA -->
-    <div class="container ftr__cta">
-      <a class="ftr__cta-link" href="#contact">
-        获取授权激活码
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            d="M5 12h13M12.5 5.5 19 12l-6.5 6.5"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </a>
-    </div>
-
-    <!-- 信息条 -->
+    <!-- 信息条（原先这里还有一行「获取授权激活码」的收尾 CTA，已按要求去掉；
+         与上方区块的分隔线由本条自己的 border-top 提供，不受影响） -->
     <div class="container ftr__bar">
       <div class="ftr__left">
         <span class="ftr__brand">
@@ -361,40 +345,6 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   margin-top: 24px;
-}
-
-/* ---------------------------- CTA ---------------------------- */
-
-.ftr__cta {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 46px;
-  padding-bottom: 30px;
-  border-top: 1px solid var(--line);
-}
-
-.ftr__cta-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 15px;
-  letter-spacing: 0.04em;
-  color: var(--text-dim);
-  transition: color 0.4s var(--ease);
-}
-
-.ftr__cta-link svg {
-  width: 16px;
-  height: 16px;
-  transition: transform 0.45s var(--ease);
-}
-
-.ftr__cta-link:hover {
-  color: var(--cyan);
-}
-
-.ftr__cta-link:hover svg {
-  transform: translateX(5px);
 }
 
 /* ---------------------------- 信息条 ---------------------------- */
