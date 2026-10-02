@@ -16,14 +16,17 @@ onMounted(() => {
 <template>
   <NuxtRouteAnnouncer />
 
-  <!-- 背景层：点阵地形，在内容之下。
-       原先的极光光晕（.aurora）按新设计去掉了，需要的话可以从 git 历史里找回。 -->
-  <DotMatrix />
-
   <SiteHeader />
 
   <main>
-    <HeroSection />
+    <!-- 点阵只铺在 hero 这一块，随页面一起滚走。
+         对齐参考站实测结构：它的点阵画布尺寸与该 hero 区块完全一致
+         （1424x741 @ top 64），是 absolute 覆盖层，不是全屏 fixed 背景。 -->
+    <div class="hero-bg">
+      <DotMatrix />
+      <HeroSection />
+    </div>
+
     <AboutSection />
     <CapabilitySection />
     <ContactSection />
@@ -39,5 +42,11 @@ onMounted(() => {
 main {
   position: relative;
   z-index: 1;
+}
+
+/* 点阵的定位基准：高度即 hero 高度 */
+.hero-bg {
+  position: relative;
+  isolation: isolate;
 }
 </style>

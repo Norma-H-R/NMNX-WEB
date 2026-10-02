@@ -33,11 +33,11 @@ const ACCENT_RATIO = 0.45 // 强调色（青）占比，其余为白
 const MOUSE_R = 0.18 // 鼠标影响半径（UV）
 const MOUSE_K = 1.0 // 鼠标变色强度
 
-// 空间包络：点阵只占顶部一小块，向下渐隐。
-// 对齐参考站的实测结构（其点阵画布 741px 高、钉在 hero 区，点云集中上部），
-// 不是铺满全屏。ENV_LO 以下开始变稀，ENV_HI 以下完全消失（自顶向下的比例）。
-const ENV_LO = 0.3
-const ENV_HI = 0.7
+// 空间分布：点阵铺在 hero 区块内（画布由父容器限定，见 app.vue 的 .hero-bg），
+// 密度自顶向下递减。对齐参考站实测的自顶 12 段密度
+// （71,100,94,72,57,51,48,41,30,32,30,41 → 顶部满、底部约 3~4 成），
+// 不是"顶部一小条、下面归零"。实现方式见 fragment 里的说明：抬阈值，不是压密度。
+const THR_LIFT = 0.05 // 底部的阈值抬升量（越大越稀）
 
 // 颜色与 main.css 的设计变量一致
 const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255] // --cyan
@@ -73,8 +73,7 @@ uniform vec2 uMouse;  // UV 坐标，y 向上
 #define ACCENT_RATIO ${ACCENT_RATIO.toFixed(4)}
 #define MOUSE_R ${MOUSE_R.toFixed(4)}
 #define MOUSE_K ${MOUSE_K.toFixed(2)}
-#define ENV_LO ${ENV_LO.toFixed(4)}
-#define ENV_HI ${ENV_HI.toFixed(4)}
+#define THR_LIFT ${THR_LIFT.toFixed(4)}
 #define COL_ACCENT vec3(${COL_ACCENT.map((v) => v.toFixed(4)).join(',')})
 #define COL_WHITE vec3(${COL_WHITE.map((v) => v.toFixed(4)).join(',')})
 #define COL_BG vec3(${COL_BG.map((v) => v.toFixed(5)).join(',')})
@@ -132,15 +131,16 @@ void main() {
   vec2 suv = blockUV - flow * (FLOW_AMP / uRes);
   float val = fbm(suv * DENSITY + q * FREQUENCY);
 
-  // ---- 空间包络：只占顶部一小块，向下渐隐 ----
-  // 直接乘在 val 上而不是最后蒙版 —— 包络越弱点越稀，云是"散掉"的，
-  // 而不是整体透明度降低，这样边缘才有参考站那种逐渐消散的样子。
-  float yTop = 1.0 - uv.y; // 自顶向下 0→1（uv.y 自底向上）
-  val *= 1.0 - smoothstep(ENV_LO, ENV_HI, yTop);
-
   // ---- 阈值 + 每块随机抖动 ----
   float rnd = vhash(blockId + 7.0);
   float thr = THRESHOLD - THR_JITTER * rnd;
+
+  // ---- 空间分布：hero 内自顶向下递减 ----
+  // 这里必须用"抬阈值"，不能乘一个小于 1 的系数去压 val：
+  // val 本来就贴着阈值分布，一乘就直接掉到阈值以下，点会整片消失、分布断掉。
+  // 抬阈值是渐进的 —— 越往下越少的点能达到，才是实测那种 100→~35% 的平滑递减。
+  float yTop = 1.0 - uv.y; // 自顶向下 0→1（uv.y 自底向上）
+  thr += smoothstep(0.0, 0.95, yTop) * THR_LIFT;
 
   vec3 col = COL_BG;
   if (val > thr) {
@@ -302,8 +302,10 @@ function fallbackStatic() {
 function onPointerMove(e) {
   const el = canvasRef.value
   if (!el) return
-  pointer.tx = e.clientX / el.clientWidth
-  pointer.ty = 1 - e.clientY / el.clientHeight
+  // 画布不再是全屏固定层，必须按它自身的视口位置换算 UV
+  const r = el.getBoundingClientRect()
+  pointer.tx = (e.clientX - r.left) / r.width
+  pointer.ty = 1 - (e.clientY - r.top) / r.height
 }
 
 function onPointerLeave() {
@@ -380,7 +382,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .dotmatrix {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 0;
   width: 100%;
