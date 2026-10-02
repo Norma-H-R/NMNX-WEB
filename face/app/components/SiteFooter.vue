@@ -180,9 +180,19 @@ function buildText() {
 
   octx.font = `900 ${size}px ${family}`
   octx.textAlign = 'center'
-  octx.textBaseline = 'middle'
   octx.fillStyle = INK
-  octx.fillText(MARK, w / 2, h / 2)
+
+  // ⚠️ 这里不能用 textBaseline: 'middle'。它居中的是**字体的 em 框**，而墨色在 em 框里
+  // 的位置各字体并不一致：这个子集字体（思源黑体 Heavy）的墨色整体偏上，实测画布高 356 时
+  // 墨色上边距 0px、下边距 50px —— "南"顶上一横正好被切掉，看着就是"显示得不对"。
+  // 改成先量出墨色包围盒（actualBoundingBox*），再按包围盒精确居中：
+  // 基线取 h/2 + (上高 - 下深)/2，墨色上下边距就相等了。
+  // 老浏览器没有 actualBoundingBox*，退回按 CJK 墨色约占 0.88em 估算。
+  const mt = octx.measureText(MARK)
+  const asc = Number.isFinite(mt.actualBoundingBoxAscent) ? mt.actualBoundingBoxAscent : size * 0.88
+  const desc = Number.isFinite(mt.actualBoundingBoxDescent) ? mt.actualBoundingBoxDescent : size * 0.12
+  octx.textBaseline = 'alphabetic'
+  octx.fillText(MARK, w / 2, h / 2 + (asc - desc) / 2)
 
   offRed = tint(off, RGB_RED)
   offViolet = tint(off, RGB_VIOLET)
@@ -342,6 +352,12 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
+    <!-- 免责声明：放在字标之上 —— 字标才是页脚最下方那一块 -->
+    <p class="container ftr__note">
+      本站内容仅为技术介绍，不构成任何投资建议。交易有风险，过往表现不代表未来收益。
+      激活码按账号、经纪商与有效期签发。
+    </p>
+
     <!-- 字标：电子故障风（红紫色差 + 间歇爆发 + 切片错位） -->
     <div class="ftr__mark">
       <div class="ftr__mark-inner">
@@ -349,12 +365,6 @@ onBeforeUnmount(() => {
       </div>
       <span class="ftr__sr">{{ letters.join('') }}</span>
     </div>
-
-    <!-- 免责声明：按要求挪到页脚最下方（原先在信息条与字标之间） -->
-    <p class="container ftr__note">
-      本站内容仅为技术介绍，不构成任何投资建议。交易有风险，过往表现不代表未来收益。
-      激活码按账号、经纪商与有效期签发。
-    </p>
   </footer>
 </template>
 
@@ -458,8 +468,7 @@ onBeforeUnmount(() => {
 
 .ftr__note {
   margin: 0;
-  /* 现在排在青色字标之下，所以补一段上边距，右下角收尾 */
-  padding-top: clamp(24px, 3vw, 38px);
+  /* 排在信息条与字标之间：与字标之间留 44px（信息条自身有 24px 下内边距） */
   padding-bottom: 44px;
   max-width: 78ch;
   font-size: 12.5px;
