@@ -171,9 +171,9 @@ onBeforeUnmount(() => {
         <a v-for="item in nav" :key="item.href" :href="item.href">{{ item.label }}</a>
       </nav>
 
-      <!-- 登录/注册入口。href 暂时是占位锚点：项目里还没有登录页，
+      <!-- 登录/注册入口：纯文字，无按钮样式。href 暂时是占位锚点：项目里还没有登录页，
            等有实际地址（站内页或外部系统）时把它换掉即可。 -->
-      <a class="btn hdr__cta" href="#login"><span>登录/注册</span></a>
+      <a class="hdr__login" href="#login">登录/注册</a>
     </div>
   </header>
 </template>
@@ -300,17 +300,24 @@ onBeforeUnmount(() => {
   transform-origin: left;
 }
 
-.hdr__cta {
-  height: 42px;
-  padding: 0 22px;
-  font-size: 13.5px;
+/* 登录/注册：纯文字入口，排版与 .nav a 同一套（无边框、无底色、无胶囊）。
+   别再给它加回 .btn —— 那个按钮固定 42px 高，而条收薄到 45.6px 时上下只剩 3.6px 余量。 */
+.hdr__login {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  transition: color 0.35s var(--ease);
+}
+
+.hdr__login:hover {
+  color: var(--text);
 }
 
 @media (max-width: 860px) {
   .nav {
     display: none;
   }
-  .hdr__cta {
+  .hdr__login {
     margin-left: auto;
   }
 }
