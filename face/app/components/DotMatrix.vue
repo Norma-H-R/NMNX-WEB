@@ -22,13 +22,15 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 // ---------------------------- 可调参数 ----------------------------
 
 const SPEED = 0.15 // 流体演化速度
-const DENSITY = 1.5 // 噪声密度（越大云块越小越碎）
+const DENSITY = 1.3 // 噪声密度（越大云块越小越碎）
 const FREQUENCY = 2.5 // 域扭曲强度（越大浓核与空洞越夸张）
 const FLOW_AMP = 35 // 像素块采样点被流场推开的幅度（像素）
 const PIX = 4 // 方块边长（CSS 像素）
 const GAP = 2 // 方块间隙（CSS 像素）
-const THRESHOLD = 0.5 // 亮度阈值：低于它不出点
-const THR_JITTER = 0.08 // 每块阈值随机抖动，制造噪点边缘与空洞
+// 阈值定得很高：只有噪声峰值才出点，于是大片留黑、粒子稀疏成团
+// （浓核 + 空洞 + 游离散点）。调低它就变密、变满。
+const THRESHOLD = 0.74
+const THR_JITTER = 0.12 // 每块阈值随机抖动，制造噪点边缘与游离散点
 const ACCENT_RATIO = 0.45 // 强调色（青）占比，其余为白
 const MOUSE_R = 0.18 // 鼠标影响半径（UV）
 const MOUSE_K = 1.0 // 鼠标变色强度
@@ -37,7 +39,7 @@ const MOUSE_K = 1.0 // 鼠标变色强度
 // 密度自顶向下递减。对齐参考站实测的自顶 12 段密度
 // （71,100,94,72,57,51,48,41,30,32,30,41 → 顶部满、底部约 3~4 成），
 // 不是"顶部一小条、下面归零"。实现方式见 fragment 里的说明：抬阈值，不是压密度。
-const THR_LIFT = 0.05 // 底部的阈值抬升量（越大越稀）
+const THR_LIFT = 0.02 // 底部的阈值抬升量（越大越稀）
 
 // 颜色与 main.css 的设计变量一致
 const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255] // --cyan
