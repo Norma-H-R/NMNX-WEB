@@ -193,7 +193,9 @@ onBeforeUnmount(() => {
         @focusin="paused = true"
         @focusout="paused = false"
       >
-        <!-- 超大序号：6% 透明度，磁性视差作用在它身上 -->
+                <!-- 超大序号：6% 透明度，磁性视差作用在它身上。
+             进出场比原版快一档：mode="out-in" 是先出场再入场，首尾相加才是重新出现的
+             总时长 —— 原版两段都 0.6s，合计 1.2s，看着就是"半天才出来"。 -->
         <div class="dt__num" aria-hidden="true">
           <Transition name="dt-num" mode="out-in">
             <span :key="active" class="dt__num-in">{{ index }}</span>
@@ -564,9 +566,13 @@ onBeforeUnmount(() => {
 }
 
 /* ---------------------------- 过渡（对应 AnimatePresence mode="wait"）--------------------------- */
-.dt-num-enter-active,
+/* out-in：先跑完 leave 才开始 enter，所以两段时长相加才是"重新出现"的总时间。
+   原来各 0.6s = 1.2s；现在 0.34 + 0.2 = 0.54s。 */
+.dt-num-enter-active {
+  transition: opacity 0.34s var(--ease), transform 0.34s var(--ease), filter 0.34s var(--ease);
+}
 .dt-num-leave-active {
-  transition: opacity 0.6s var(--ease), transform 0.6s var(--ease), filter 0.6s var(--ease);
+  transition: opacity 0.2s var(--ease), transform 0.2s var(--ease), filter 0.2s var(--ease);
 }
 .dt-num-enter-from {
   opacity: 0;
