@@ -443,13 +443,47 @@ function onResize() {
   }, 160)
 }
 
-function onVisibility() {
-  if (document.hidden) {
+// 是否该在跑：同时受「标签页可见」和「画布在视口附近」两个条件约束。
+//
+// 为什么要按视口可见性停画：这条画布的开销正比于像素数（实测 0.5M 像素约 47fps、
+// 4.7M 像素只有 8fps），而它默认连滚到下面几个区块时都不停 —— 纯属白烧。
+//
+// 停/恢复为什么不会有视觉断层：
+//   1. 恢复用的是动画时间 = now - startedAt（绝对时间，见 frame()），不是累加帧数，
+//      所以暂停期间进度照走，重新出现时直接就是当前时刻该有的那一帧，不会从头播；
+//   2. 观察器带 200px rootMargin，等真正滚进视野时它早就在画了。
+let onScreen = true
+let tabVisible = true
+let staticOnly = false
+
+function syncLoop() {
+  const want = !staticOnly && onScreen && tabVisible && !!gl
+  if (want && !raf) {
+    raf = requestAnimationFrame(frame)
+  } else if (!want && raf) {
     cancelAnimationFrame(raf)
     raf = 0
-  } else if (!raf && gl) {
-    raf = requestAnimationFrame(frame)
   }
+}
+
+function onVisibility() {
+  tabVisible = !document.hidden
+  syncLoop()
+}
+
+let io = null
+
+function watchOnScreen() {
+  const el = canvasRef.value
+  if (!el || typeof IntersectionObserver === 'undefined') return
+  io = new IntersectionObserver(
+    (entries) => {
+      onScreen = entries[entries.length - 1].isIntersecting
+      syncLoop()
+    },
+    { rootMargin: '200px 0px' },
+  )
+  io.observe(el)
 }
 
 // ---------------------------- 生命周期 ----------------------------
@@ -473,12 +507,14 @@ onMounted(() => {
 
   if (reduced) {
     console.info('[DotMatrix] 检测到 prefers-reduced-motion，只渲染静态一帧。')
+    staticOnly = true
     drawFrame(0)
     return
   }
 
   startedAt = performance.now()
-  raf = requestAnimationFrame(frame)
+  watchOnScreen()
+  syncLoop()
   window.addEventListener('pointermove', onPointerMove, { passive: true })
   document.addEventListener('pointerleave', onPointerLeave)
   window.addEventListener('resize', onResize)
@@ -488,6 +524,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearTimeout(resizeTimer)
   cancelAnimationFrame(raf)
+  if (io) io.disconnect()
   window.removeEventListener('pointermove', onPointerMove)
   document.removeEventListener('pointerleave', onPointerLeave)
   window.removeEventListener('resize', onResize)
