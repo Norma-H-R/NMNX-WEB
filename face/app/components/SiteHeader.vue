@@ -171,7 +171,9 @@ onBeforeUnmount(() => {
         <a v-for="item in nav" :key="item.href" :href="item.href">{{ item.label }}</a>
       </nav>
 
-      <a class="btn hdr__cta" href="#contact"><span>联系我们</span></a>
+      <!-- 登录/注册入口。href 暂时是占位锚点：项目里还没有登录页，
+           等有实际地址（站内页或外部系统）时把它换掉即可。 -->
+      <a class="btn hdr__cta" href="#login"><span>登录/注册</span></a>
     </div>
   </header>
 </template>
