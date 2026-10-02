@@ -26,22 +26,25 @@ const MARK = '南门拈星'
 const letters = [...MARK]
 
 // 页脚目录。原来这里是「理念 / 能力 / 联系」三项，按要求换掉。
-// 有 href 的指向站内**已有**区块，不留死链：领取与反馈落到联系区，
-// 项目 / 产品介绍落到理念与能力区。
-// 博客 / 论坛 / 回测报告 / 文章这四项页面还没做，先只留位、不给链接 ——
-// 渲染成不可点的灰项（.ftr__soon），避免点了跳空。
-// 页面做出来之后，给对应项补上 href 就自动变成可点链接，模板不用改。
+// 前五项落到站内区块；后四项指向独立页面（pages/blog|forum|reports|articles），
+// 那些页面目前是占位页，但链接是通的，不会 404。
+// 以后再添还没做的入口，可以只写 label 不给 href —— 会渲染成不可点的灰项 .ftr__soon。
 const dir = [
   { label: '观摩领取', href: '#contact' },
   { label: '测试领取', href: '#contact' },
   { label: '项目介绍', href: '#about' },
   { label: '产品介绍', href: '#capability' },
   { label: '问题反馈', href: '#contact' },
-  { label: '博客' },
-  { label: '论坛' },
-  { label: '回测报告' },
-  { label: '文章' },
+  { label: '博客', href: '/blog' },
+  { label: '论坛', href: '/forum' },
+  { label: '回测报告', href: '/reports' },
+  { label: '文章', href: '/articles' },
 ]
+
+// 锚点链接：在首页直接跳区块；在子页（博客 / 论坛…）要带回首页路径，
+// 否则点了不动 —— 那些 #about 在子页上并不存在。
+const route = useRoute()
+const dirHref = (h) => (!h ? '' : h.startsWith('#') && route.path !== '/' ? `/${h}` : h)
 
 // ---------------------------- 可调参数 ----------------------------
 
@@ -369,7 +372,7 @@ onBeforeUnmount(() => {
          渲染成不可点的灰项 .ftr__soon，免得点了跳空。 -->
     <nav class="container ftr__dir" aria-label="站内目录">
       <template v-for="l in dir" :key="l.label">
-        <a v-if="l.href" :href="l.href">{{ l.label }}</a>
+        <a v-if="l.href" :href="dirHref(l.href)">{{ l.label }}</a>
         <span v-else class="ftr__soon" title="筹备中">{{ l.label }}</span>
       </template>
     </nav>

@@ -158,7 +158,7 @@ img {
 
 .section {
   position: relative;
-  padding: clamp(96px, 15vh, 190px) 0;
+  padding: clamp(60px, 15vh, 100px) 0;
 }
 
 /* --------------------------------------------------------------------------

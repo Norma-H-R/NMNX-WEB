@@ -19,22 +19,17 @@ onMounted(() => {
   <SiteHeader />
 
   <!--
-    页面骨架：这里只按顺序摆区块，不写任何区块内部的布局或样式。
-    改某一块（文案 / 样式 / 交互）请直接改对应组件文件：
-      HeroBlock.vue        首屏：点阵画布 + 标题文案 + 磨砂黑层
-      AboutSection.vue     关于
-      CapabilitySection.vue 能力
-      ContactSection.vue   联系
-      SiteHeader.vue       页头（含液态玻璃折射滤镜）
-      SiteFooter.vue       页脚（含故障风字标）
-    组件由 Nuxt 自动导入，不必在这里 import。
+    全站外壳：页头 / main / 页脚 / 噪点都留在这一层，换路由时不重挂。
+    各页自己的内容在 pages/ 下：
+      pages/index.vue      首页：首屏 + 理念 + 能力 + 联系
+      pages/blog.vue       博客（占位）
+      pages/forum.vue      论坛（占位）
+      pages/reports.vue    回测报告（占位）
+      pages/articles.vue   文章（占位）
+    区块组件由 Nuxt 自动导入，不必在这里 import。
   -->
   <main>
-    <HeroBlock />
-
-    <AboutSection />
-    <CapabilitySection />
-    <ContactSection />
+    <NuxtPage />
   </main>
 
   <SiteFooter />

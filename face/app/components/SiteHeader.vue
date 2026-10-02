@@ -4,6 +4,11 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 const solid = ref(false)
 const headerRef = ref(null)
 
+// 锚点链接：在首页直接跳区块；在子页（博客 / 论坛…）要带回首页路径，
+// 否则点了不动 —— 那些 #about 在子页上并不存在。
+const route = useRoute()
+const anchor = (h) => (route.path === '/' ? h : `/${h}`)
+
 const nav = [
   { label: '理念', href: '#about' },
   { label: '能力', href: '#capability' },
@@ -155,7 +160,7 @@ onBeforeUnmount(() => {
     </svg>
 
     <div class="hdr__inner container">
-      <a class="brand" href="#top">
+      <a class="brand" :href="anchor('#top')">
         <svg class="brand__mark" viewBox="0 0 24 24" aria-hidden="true">
           <path
             d="M12 1.6c.6 4.9 1.7 6 6.6 6.6-4.9.6-6 1.7-6.6 6.6-.6-4.9-1.7-6-6.6-6.6 4.9-.6 6-1.7 6.6-6.6Z"
@@ -168,7 +173,7 @@ onBeforeUnmount(() => {
       </a>
 
       <nav class="nav">
-        <a v-for="item in nav" :key="item.href" :href="item.href">{{ item.label }}</a>
+        <a v-for="item in nav" :key="item.href" :href="anchor(item.href)">{{ item.label }}</a>
       </nav>
 
       <!-- 登录/注册入口：纯文字，无按钮样式。href 暂时是占位锚点：项目里还没有登录页，
