@@ -279,6 +279,13 @@ function onResize() {
   resizeTimer = setTimeout(rebuild, 160)
 }
 
+// 盯住画布**自身**的尺寸变化，而不只是 window resize。
+// 少了这一层有个真实的坑：CSS 改了高度而 window 没有 resize（改样式、HMR 热更、
+// 字体替换引起重排…）时画布不会重建，浏览器就会拿旧的位图去拉伸铺满新的 CSS 尺寸 ——
+// 表现就是"字被拉长了"。有 ResizeObserver 兜住，这种中间态不会出现。
+// （buildText 只改画布的像素缓冲，不改它的 CSS 尺寸，所以不会和这个观察器来回触发。）
+let ro = null
+
 function toTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
@@ -301,6 +308,10 @@ onMounted(() => {
 
   window.addEventListener('resize', onResize)
   document.addEventListener('visibilitychange', onVisibility)
+  if (typeof ResizeObserver !== 'undefined' && canvasRef.value) {
+    ro = new ResizeObserver(() => onResize())
+    ro.observe(canvasRef.value)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -308,6 +319,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(raf)
   window.removeEventListener('resize', onResize)
   document.removeEventListener('visibilitychange', onVisibility)
+  if (ro) ro.disconnect()
 })
 </script>
 
