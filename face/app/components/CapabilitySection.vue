@@ -395,9 +395,10 @@ onBeforeUnmount(() => {
      让出的宽度全给文字列（599 → 727px），左侧文字的行随之变长。 */
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.53fr);
   gap: clamp(24px, 3.2vw, 52px);
-  /* 顶部对齐，不再垂直居中：图片比文字栏高，居中会让它的顶边蹿到胶囊上方约 80px。
-     两列各自偏移同一个 --dt-top，图片顶边因此与胶囊顶边严格齐平。 */
-  align-items: start;
+  /* 两列上下居中：左列（文字）比右列（图片 + 切换按钮）矮，居中后落在整行中间。
+     ⚠️ 这与之前"胶囊顶边与图片顶边齐平"是互斥的 —— 顶端对齐和垂直居中只能取一个，
+     按最新要求取居中。--dt-top 仍作为两列各自的上内边距保留，居中偏移不受影响。 */
+  align-items: center;
   --dt-top: clamp(6px, 1vw, 14px);
   padding-left: clamp(20px, 3vw, 44px);
 }
@@ -445,12 +446,11 @@ onBeforeUnmount(() => {
   /* 左右留白交给 .dt__row 的列间距；上边距与图片共用 --dt-top，两者顶边才齐。
      数值由原来的 clamp(8px,1.4vw,20px) 收到 clamp(6px,1vw,14px) —— 胶囊随之略微上提。 */
   padding: var(--dt-top) 0;
-  /* 竖排 + align-self: stretch：撑满整行高度，配合 .dt__foot 的 margin-top: auto
-     把作者行钉在列底 —— 引用文案长一点短一点，下面那条横线都不会跟着上下跑。
-     行高由右列（图片 + 切换按钮）决定，是恒定的。 */
+  /* 竖排：胶囊 → 引用 → 作者行。
+     不再 align-self: stretch —— 撑满整行就等于整行高度，垂直居中无从谈起
+     （那是上一轮"把作者行钉在列底"的做法，本轮要求改为整体居中，故去掉）。 */
   display: flex;
   flex-direction: column;
-  align-self: stretch;
   /* 滚动视差：与图片列反向位移（脚本写 --cap-text-y） */
   transform: translate3d(0, var(--cap-text-y, 0px), 0);
   will-change: transform;
@@ -465,8 +465,9 @@ onBeforeUnmount(() => {
   /* 竖排：图片在上、切换按钮在下（按钮靠右由 .dt__nav 的 margin-left: auto 给） */
   display: flex;
   flex-direction: column;
-  /* 与 .dt__main 的上边距取同一个值 → 图片顶边 = 公司胶囊顶边 */
-  margin-top: var(--dt-top);
+  /* 这里原来有一条 margin-top: var(--dt-top)，是为了让图片顶边与胶囊顶边齐平。
+     改成两列上下居中之后它就成了**不对称偏移**：外边距盒居中、边框盒却被推低
+     半个外边距，两列的内容中心会差 7px。所以去掉，让边框盒直接参与居中。 */
 }
 
 .dt__media-move {
@@ -582,9 +583,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-end;
   gap: 24px;
-  /* 顶开到底部：把作者行钉在列底，位置不随引用文案长短变化。
-     与引用的最小间距由 .dt__quote 自己的 margin-bottom 保证。 */
-  margin-top: auto;
+  /* 不再用 margin-top: auto 钉在列底 —— 改为整列随 .dt__row 的 align-items: center 居中。
+     作者行的位置因此取决于文字块总高；当前三句引用都被 min-height 顶成同一高度，
+     所以它依然停在固定位置（实测见提交说明）。 */
 }
 
 .dt__author {
@@ -656,18 +657,21 @@ onBeforeUnmount(() => {
   transition: color 0.35s var(--ease), border-color 0.35s var(--ease), transform 0.2s var(--ease);
 }
 
-/* 原组件那个从侧向滑入的填充层：这里用 ::before 平移实现 */
+/* 悬停填充：由中间向外扩散（原先是 scaleX 从左侧横向刷过来，也是原组件那个侧向滑入层）。
+   按钮本身是 48x48 的圆（圆角 99px + overflow: hidden），所以把 ::before 做成同尺寸的圆、
+   从 scale(0) 放大到 1，就是从中心铺满整颗按钮。 */
 .dt__arrow::before {
   content: '';
   position: absolute;
   inset: 0;
+  border-radius: 50%;
   background: var(--cyan);
-  transform: scaleX(0);
-  transition: transform 0.4s var(--ease);
+  transform: scale(0);
+  transition: transform 0.45s var(--ease);
 }
 
 .dt__arrow:hover::before {
-  transform: scaleX(1);
+  transform: scale(1);
 }
 
 .dt__arrow:hover {
