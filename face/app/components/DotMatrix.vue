@@ -22,8 +22,18 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 // ---------------------------- 可调参数 ----------------------------
 
 // 以下数值来自对参考站运行时的实测抓取（_ref/trae-uniforms.json），不是估的
-const PIX = 5 // 方块边长：原版 e1PixelSize = 5
-const GAP = 2 // 方块间隙：原版 e1PixelGap = 2
+//
+// ⚠️ 方块几何必须用**整数**画布像素给。原版是 5 + 2 = 7；我们为了降分辨率把它缩小，
+//    但一度写成 5×0.6 = 3 与 2×0.6 = 1.2 —— 一格 4.2 像素不是整数，方块落在像素网格
+//    上的相位会来回漂，宽度与间隙在 3/4 之间跳动，漂移周期正好 5 格（4.2×5=21 是整数），
+//    于是每 5 格冒出一条更宽的缝，肉眼看就是规则的"分割线"。
+//    现在改成整数：3 + 1 = 4 画布像素一格。
+const PIX = 3 // 方块边长（画布 px）
+const GAP = 1 // 方块间隙（画布 px）
+const PITCH = PIX + GAP // 4
+// 屏幕上一格仍是 7 CSS px（与原版一致），渲染倍率由此反推
+const CSS_PITCH = 7
+const RENDER_SCALE = PITCH / CSS_PITCH // ≈ 0.571 → 像素数约 1/3.06
 
 // 流体层两个颜色（只用于"亮度"这个密度信号，不出现在画面上）
 // 原版是 绿(#32F08C, 均值 0.562) → 白(1.0)，跨度 0.44；我们用 深蓝 → 白，跨度 0.78，
@@ -38,7 +48,8 @@ const DENSITY = 0.5
 const FREQUENCY = 4
 
 // 像素化参数
-const FLOW_AMP = 35 // 采样点被流场推开的幅度（像素）：原版 ×35.0
+// 采样点被流场推开的幅度：原版 ×35.0，按 CSS 像素给，再换算到画布像素
+const FLOW_AMP = 35 * RENDER_SCALE
 // 亮度阈值：原版 e1Threshold = 0.87（作用在它自己的配色跨度上）。
 // 因为我们的流体参数/配色与它不同，这里按**本实现实测分布**标定：
 // 均值 0.601、标准差 0.0766，取 p85 ≈ 0.702 → 覆盖率约 15%（已含 JITTER/2 的下移）。
@@ -70,15 +81,6 @@ const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255].map((v) => v * DOT_DIM) // 
 const COL_WHITE = [1.0, 1.0, 1.0].map((v) => v * DOT_DIM)
 const COL_BG = [6 / 255, 7 / 255, 13 / 255] // --bg
 
-// 画布的内部渲染倍率（相对 CSS 像素）。1 = 1:1；< 1 就是降分辨率渲染。
-//
-// 为什么要降：这条画布的开销几乎正比于像素数（实测 0.5M 像素 ~47fps、2.07M ~13.7fps、
-// 4.7M ~8.4fps），而它铺满整个首屏。倍率是按平方省的：0.6 → 约 2.8 倍。
-// 点阵本来就是 7px 的方块，降倍率只让方块边缘软一点，疏密与尺寸都不变。
-//
-// 刻意不再跟随 devicePixelRatio：方块尺寸应以 CSS 像素为准。原来跟着 DPR 走，
-// hi-DPI 屏上 DPR 1.5 时方块只有 4.67 CSS px —— 屏幕越细腻点越小，而且还更费。
-const RENDER_SCALE = 0.6
 const FLUID_SCALE = 0.5 // 流体那趟再降半分辨率渲染（流体很平滑，肉眼无差，省 4 倍）
 
 // ---------------------------- 着色器 ----------------------------
@@ -154,10 +156,10 @@ uniform vec2 uMouse;
 uniform float uMouseRadius;
 uniform float uMouseStrength;
 
-// 这三个都是"画布像素"单位，必须跟着渲染倍率一起缩，屏幕上的尺寸才不会变
-#define PIX ${(PIX * RENDER_SCALE).toFixed(3)}
-#define GAP ${(GAP * RENDER_SCALE).toFixed(3)}
-#define FLOW_AMP ${(FLOW_AMP * RENDER_SCALE).toFixed(3)}
+// 这三个都已经是"画布像素"单位（几何取整数、流场幅度已按倍率换算）
+#define PIX ${PIX.toFixed(3)}
+#define GAP ${GAP.toFixed(3)}
+#define FLOW_AMP ${FLOW_AMP.toFixed(3)}
 #define THRESHOLD ${THRESHOLD.toFixed(4)}
 #define JITTER ${JITTER.toFixed(4)}
 #define ACCENT_RATIO ${ACCENT_RATIO.toFixed(4)}
