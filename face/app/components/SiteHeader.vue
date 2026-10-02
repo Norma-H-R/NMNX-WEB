@@ -30,20 +30,118 @@ function onScroll() {
   raf = requestAnimationFrame(apply)
 }
 
+// ---------------------------------------------------------------------------
+// 液态玻璃（手写，不引库）
+//
+// 折射 = 位移贴图 + feDisplacementMap，这是各家 liquid-glass 库的共同内核
+// （liquid-glass-react / liquid-svg-glass / tomagranate 都是这一套），
+// 差别只在贴图怎么生成。这里是整屏通铺的横条，透镜只发生在下边缘，所以贴图
+// 只需沿 y 变化、沿 x 完全一致 —— 画成 8px 宽就够，横向拉伸不丢任何信息。
+//
+// 贴图用 canvas 现画：R 通道保持中性（横向不动），G 通道编码纵向位移，
+// 剖面的导数形状让边缘处为 0、往里 LENS_W 处最大、再往外衰减（就是一块透镜）。
+// ---------------------------------------------------------------------------
+const LENS_W = 14 // 透镜影响深度(px)：离边缘这么远的地方位移最大
+const LENS_SCALE = 14 // feDisplacementMap 的 scale（位移 ≈ scale × 通道偏移量）
+const LENS_SIGN = -1 // -1 = 往玻璃内部取样（边缘压缩感），+1 是外凸；凭眼睛定
+
+const mapRef = ref(null)
+
+function buildLensMap(h) {
+  const c = document.createElement('canvas')
+  c.width = 8
+  c.height = h
+  const g = c.getContext('2d')
+  const im = g.createImageData(8, h)
+  for (let y = 0; y < h; y++) {
+    const d = h - 1 - y // 距下边缘的像素数
+    const t = d / LENS_W
+    const amp = t === 0 ? 0 : t * Math.exp(1 - t) // 0 在边缘、1 在 t=1 处
+    const gv = Math.max(0, Math.min(255, Math.round(127.5 + LENS_SIGN * amp * 120)))
+    for (let x = 0; x < 8; x++) {
+      const i = (y * 8 + x) * 4
+      im.data[i] = 128 // R：中性，不横向位移
+      im.data[i + 1] = gv // G：纵向位移
+      im.data[i + 2] = 0
+      im.data[i + 3] = 255
+    }
+  }
+  g.putImageData(im, 0, 0)
+  return c.toDataURL()
+}
+
+// 镜面高光跟随鼠标。写 CSS 变量（不触发渲染），位移交给 transform 过渡 ——
+// 这样不需要 @property 注册变量也能平滑，兼容面更宽。
+function onPointerMove(e) {
+  const el = headerRef.value
+  if (!el) return
+  el.style.setProperty('--mx', (e.clientX / (window.innerWidth || 1)).toFixed(4))
+}
+
+// ⚠️ feImage 的 x/y/width/height 必须写**像素值**，写百分比它整块不生效
+//    （实测：百分比 → 上段下段位移一样，说明贴图根本没被读；像素值 → 严格按贴图
+//     上下两半给出 +7 / -7）。承载滤镜的 SVG 尺寸无关，所以这里用像素值 + 元素实宽。
+// 另外滤镜得等贴图挂好再启用，否则首帧会用一个空 feImage 去位移背景（会闪一下），
+// 所以 CSS 里写成 var(--hdr-lens, blur(0px))，由这里赋值才生效。
+function syncLens() {
+  const el = headerRef.value
+  const img = mapRef.value
+  if (!el || !img) return
+  const w = Math.round(el.getBoundingClientRect().width) || 1
+  const h = el.offsetHeight || 76
+  img.setAttribute('x', '0')
+  img.setAttribute('y', '0')
+  img.setAttribute('width', String(w))
+  img.setAttribute('height', String(h))
+  img.setAttribute('href', buildLensMap(h))
+  el.style.setProperty('--hdr-lens', 'url(#hdrLens)')
+}
+
 onMounted(() => {
   apply()
+  syncLens()
   window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('pointermove', onPointerMove, { passive: true })
+  window.addEventListener('resize', syncLens, { passive: true })
 })
 
 onBeforeUnmount(() => {
   if (raf) cancelAnimationFrame(raf)
   window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('resize', syncLens)
 })
 </script>
 
 <template>
   <header ref="headerRef" class="hdr" :class="{ 'is-solid': solid }">
+    <!-- 折射滤镜。贴图由 canvas 现画（见脚本），用 backdrop-filter: url(#hdrLens) 挂上。
+         0×0 + overflow:hidden，只是为了把 defs 藏起来，不参与布局。 -->
+    <svg class="hdr__defs" aria-hidden="true" focusable="false">
+      <filter
+        id="hdrLens"
+        x="0"
+        y="0"
+        width="100%"
+        height="100%"
+        color-interpolation-filters="sRGB"
+      >
+        <!-- x/y/width/height 由脚本按元素实宽写成像素值，别在这里写百分比 -->
+        <feImage ref="mapRef" preserveAspectRatio="none" result="lens" />
+        <feDisplacementMap
+          in="SourceGraphic"
+          in2="lens"
+          :scale="LENS_SCALE"
+          xChannelSelector="R"
+          yChannelSelector="G"
+        />
+      </filter>
+    </svg>
+
     <div class="hdr__inner container">
+      <!-- 镜面高光：跟着鼠标横向走，玻璃的"活"来自这一笔 -->
+      <span class="hdr__sheen" aria-hidden="true" />
+
       <a class="brand" href="#top">
         <svg class="brand__mark" viewBox="0 0 24 24" aria-hidden="true">
           <path
@@ -81,12 +179,31 @@ onBeforeUnmount(() => {
   border-bottom-color: var(--line);
 }
 
+.hdr__defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
 .hdr__inner {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
   height: 76px;
+
+  /* 通铺整屏宽：跳出 .container 的 1180px 居中约束。
+     但内容仍对齐页面栅格 —— 左右内边距取 max(gutter, (100% - 1180px) / 2)：
+     宽屏时等于居中留白（和其它区块正文的左边缘在一起），窄屏时退回普通 gutter。
+     不写断点，天然自适应。 */
+  width: 100%;
+  max-width: none;
+  padding-left: max(var(--gutter), calc((100% - var(--maxw)) / 2));
+  padding-right: max(var(--gutter), calc((100% - var(--maxw)) / 2));
+
   /* 常驻底衬：首屏的点阵会从这一条打穿、压着品牌名与导航文字，没有底衬读不清。
      浓度由 --hdr-p 连续插值（静止 0.30/6px → 滚开 0.72/16px），只此一层。
 
@@ -96,13 +213,38 @@ onBeforeUnmount(() => {
      注：别把原因写成 backdrop-filter 的 none 不可插值 —— 实测 Chrome 能把
      blur(18px) ↔ none 平滑插值，跳变另有其因。 */
   background: rgba(6, 7, 13, calc(0.3 + var(--hdr-p, 0) * 0.42));
-  -webkit-backdrop-filter: blur(calc(6px + var(--hdr-p, 0) * 10px))
+  /* 折射必须排在前面：先做边缘折射、再模糊，"玻璃厚度"才出得来。
+     --hdr-lens 由脚本在贴图挂好之后才赋值（回退值是 blur(0px) 这种无害的空滤镜），
+     否则首帧会拿一个空 feImage 去位移背景，会闪一下。 */
+  -webkit-backdrop-filter: var(--hdr-lens, blur(0px)) blur(calc(6px + var(--hdr-p, 0) * 10px))
     saturate(calc(120% + var(--hdr-p, 0) * 30%));
-  backdrop-filter: blur(calc(6px + var(--hdr-p, 0) * 10px))
+  backdrop-filter: var(--hdr-lens, blur(0px)) blur(calc(6px + var(--hdr-p, 0) * 10px))
     saturate(calc(120% + var(--hdr-p, 0) * 30%));
-  /* 玻璃的镜面高光：顶边一条内高光。这是「液态玻璃」里最出玻璃感的一笔，
-     成本几乎为零，先垫上。 */
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  /* 镜面高光：顶边一道亮边；底边一道弱边（透镜在下边缘，那里要留一点回光） */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* 镜面高光贴片：比栏高更高，靠 overflow:hidden 裁成一条。
+   位移交给 transform（走合成层，不触发重排）；--mx 由脚本写。 */
+.hdr__sheen {
+  position: absolute;
+  top: -60%;
+  bottom: -60%;
+  left: 0;
+  width: 360px;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 72%);
+  transform: translateX(calc(var(--mx, 0.5) * (100vw - 360px)));
+  transition: transform 0.5s var(--ease);
+}
+
+/* 内容压在高光之上 */
+.brand,
+.nav,
+.hdr__cta {
+  position: relative;
+  z-index: 1;
 }
 
 .brand {
