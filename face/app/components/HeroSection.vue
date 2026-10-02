@@ -7,6 +7,9 @@ const chars = [...title]
 
 <template>
   <section id="top" class="hero">
+    <!-- 渐变磨砂黑：下黑上透，只压这一屏；文字落在它上面才读得清 -->
+    <div class="hero__veil" aria-hidden="true" />
+
     <div class="container hero__inner">
       <p class="eyebrow hero__eyebrow">量化交易系统</p>
 
@@ -24,11 +27,6 @@ const chars = [...title]
         以数据与工程为底，做安静的量化系统。<br />
         不喧哗，不承诺，只把该做的事做到毫秒级。
       </p>
-
-      <div class="hero__cta">
-        <a class="btn btn--primary" href="#capability"><span>了解系统</span></a>
-        <a class="btn" href="#contact"><span>联系我们</span></a>
-      </div>
 
       <div class="hero__rule" />
 
@@ -52,12 +50,46 @@ const chars = [...title]
   z-index: 1;
   min-height: 100svh;
   display: flex;
-  align-items: center;
-  padding: 140px 0 120px;
+  /* 文字整体压到左下角：纵向贴底，横向见 .hero__inner */
+  align-items: flex-end;
+  padding: 120px 0 clamp(72px, 9vh, 116px);
+}
+
+/* 渐变磨砂黑：下黑、上透明。
+   两点说明：
+   1. 用 --bg 而不是纯 #000 —— 底色和页面其它区块一致，滚到底部接下一屏时不会有接缝；
+   2. backdrop-filter 把背后的点阵糊掉（这才是"磨砂"），再用 mask 把那层模糊限制在
+      黑色出现的那半屏，上面保持通透。 */
+.hero__veil {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    rgba(6, 7, 13, 0.98) 0%,
+    rgba(6, 7, 13, 0.93) 20%,
+    rgba(6, 7, 13, 0.7) 42%,
+    rgba(6, 7, 13, 0.36) 64%,
+    rgba(6, 7, 13, 0.1) 84%,
+    rgba(6, 7, 13, 0) 100%
+  );
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+  backdrop-filter: blur(16px) saturate(115%);
+  -webkit-mask-image: linear-gradient(to top, #000 10%, rgba(0, 0, 0, 0.6) 48%, transparent 88%);
+  mask-image: linear-gradient(to top, #000 10%, rgba(0, 0, 0, 0.6) 48%, transparent 88%);
 }
 
 .hero__inner {
+  position: relative;
+  /* 必须压过 veil：veil 是定位元素(z-index:0)，非定位的块会排在它下面，
+     文字会被那层黑一起压暗。所以这里显式抬到 z-index:1。 */
+  z-index: 1;
   width: 100%;
+  /* 跳出全局 .container 的居中收窄，让文字贴到屏幕左边 */
+  max-width: none;
+  padding-left: clamp(20px, 4.5vw, 72px);
+  padding-right: clamp(20px, 4.5vw, 72px);
 }
 
 .hero__title {
@@ -67,17 +99,9 @@ const chars = [...title]
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.04em;
-  /* 渐变整体调亮、压低对比度，这样描边的边沿才不会看出来 */
-  background: linear-gradient(180deg, #ffffff 6%, #e2e9fa 55%, #b6c2de 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  /* Bold 之上想再重只能靠描边"长胖"。
-     paint-order 把描边垫在填充下面，字形变粗但内部笔画不会被糊住。
-     想更粗就调这个数值：2px 实测约等于骨架 +4px。
-     注意它不随字号缩放，小屏要单独收细，否则相对会显得过重 */
-  -webkit-text-stroke: 2px #e8efff;
-  paint-order: stroke fill;
+  /* 纯白平色。原来这里是 渐变填充 + text-stroke 描边 的"特效"，
+     按要求去掉了；注意去掉后字面会比之前细一点——那 2px 描边本来就是用来"长胖"的。 */
+  color: #fff;
 }
 
 /* 每个字外面套一层 overflow:hidden 的遮罩，字从下方滑入 */
@@ -98,13 +122,6 @@ const chars = [...title]
   font-size: clamp(15px, 1.15vw, 17.5px);
   line-height: 2;
   color: var(--text-dim);
-}
-
-.hero__cta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 44px;
 }
 
 .hero__rule {
@@ -190,7 +207,6 @@ const chars = [...title]
      .char            i*0.07        / 1.3s  power4.out
      .hero__eyebrow   0.15          / 0.9s
      .hero__sub       0.66          / 1.0s
-     .hero__cta > *   0.96 + i*0.09 / 0.9s
      .hero__rule      1.20          / 1.3s  power2.inOut
      .hero__meta > *  1.60 + i*0.08 / 0.8s
      .hero__cue       1.96          / 0.8s
@@ -199,7 +215,6 @@ const chars = [...title]
 .char,
 .hero__eyebrow,
 .hero__sub,
-.hero__cta > *,
 .hero__rule,
 .hero__meta > *,
 .hero__cue {
@@ -226,18 +241,6 @@ const chars = [...title]
   animation-name: hero-rise;
   animation-duration: 1s;
   animation-delay: 0.66s;
-}
-
-.hero__cta > * {
-  --rise: 22px;
-  animation-name: hero-rise;
-  animation-duration: 0.9s;
-}
-.hero__cta > *:nth-child(1) {
-  animation-delay: 0.96s;
-}
-.hero__cta > *:nth-child(2) {
-  animation-delay: 1.05s;
 }
 
 .hero__rule {
@@ -328,7 +331,6 @@ const chars = [...title]
   .char,
   .hero__eyebrow,
   .hero__sub,
-  .hero__cta > *,
   .hero__rule,
   .hero__meta > *,
   .hero__cue {
@@ -342,22 +344,9 @@ const chars = [...title]
   }
 }
 
-/* 描边是绝对像素，不随 clamp 缩放，小屏按断点收细才不会显得过重 */
-@media (max-width: 900px) {
-  .hero__title {
-    -webkit-text-stroke-width: 1.5px;
-  }
-}
-
 @media (max-width: 680px) {
   .hero__cue {
     display: none;
-  }
-}
-
-@media (max-width: 560px) {
-  .hero__title {
-    -webkit-text-stroke-width: 1px;
   }
 }
 </style>
