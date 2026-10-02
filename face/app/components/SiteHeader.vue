@@ -70,14 +70,6 @@ function buildLensMap(h) {
   return c.toDataURL()
 }
 
-// 镜面高光跟随鼠标。写 CSS 变量（不触发渲染），位移交给 transform 过渡 ——
-// 这样不需要 @property 注册变量也能平滑，兼容面更宽。
-function onPointerMove(e) {
-  const el = headerRef.value
-  if (!el) return
-  el.style.setProperty('--mx', (e.clientX / (window.innerWidth || 1)).toFixed(4))
-}
-
 // ⚠️ feImage 的 x/y/width/height 必须写**像素值**，写百分比它整块不生效
 //    （实测：百分比 → 上段下段位移一样，说明贴图根本没被读；像素值 → 严格按贴图
 //     上下两半给出 +7 / -7）。承载滤镜的 SVG 尺寸无关，所以这里用像素值 + 元素实宽。
@@ -101,14 +93,12 @@ onMounted(() => {
   apply()
   syncLens()
   window.addEventListener('scroll', onScroll, { passive: true })
-  window.addEventListener('pointermove', onPointerMove, { passive: true })
   window.addEventListener('resize', syncLens, { passive: true })
 })
 
 onBeforeUnmount(() => {
   if (raf) cancelAnimationFrame(raf)
   window.removeEventListener('scroll', onScroll)
-  window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('resize', syncLens)
 })
 </script>
@@ -139,9 +129,6 @@ onBeforeUnmount(() => {
     </svg>
 
     <div class="hdr__inner container">
-      <!-- 镜面高光：跟着鼠标横向走，玻璃的"活"来自这一笔 -->
-      <span class="hdr__sheen" aria-hidden="true" />
-
       <a class="brand" href="#top">
         <svg class="brand__mark" viewBox="0 0 24 24" aria-hidden="true">
           <path
@@ -187,8 +174,6 @@ onBeforeUnmount(() => {
 }
 
 .hdr__inner {
-  position: relative;
-  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -224,28 +209,7 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
 }
 
-/* 镜面高光贴片：比栏高更高，靠 overflow:hidden 裁成一条。
-   位移交给 transform（走合成层，不触发重排）；--mx 由脚本写。 */
-.hdr__sheen {
-  position: absolute;
-  top: -60%;
-  bottom: -60%;
-  left: 0;
-  width: 360px;
-  z-index: 0;
-  pointer-events: none;
-  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 72%);
-  transform: translateX(calc(var(--mx, 0.5) * (100vw - 360px)));
-  transition: transform 0.5s var(--ease);
-}
 
-/* 内容压在高光之上 */
-.brand,
-.nav,
-.hdr__cta {
-  position: relative;
-  z-index: 1;
-}
 
 .brand {
   display: inline-flex;
