@@ -21,29 +21,42 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
  * 数据从原来三张卡片的文案改写成原组件的四段式：
  *   quote   ← 描述（大字引用）      author ← 标题（主控 / 跟随端 / 授权）
  *   company ← 首个标签（顶部胶囊）   role   ← 次个标签
+ *
+ * 布局改造成「左文字 / 右图片」两列，并加两层视差（都是纯手写，不引依赖）：
+ *   滚动视差   两列反向位移，文字慢、图片快 —— 脚本按 .dt 穿过视口的进度写
+ *              --cap-text-y / --cap-media-y；
+ *   图片入场   同一支进度驱动 "透明缩小 → 逐渐放大"（--cap-media-o / --cap-media-s），
+ *              换图时 img 自己再缩放一次，父子变换相乘互不打架。
+ * 每项配一张图，见下方 items[].image（生成图裁掉右下角水印后转的 WebP）。
  */
 
 const title = 'CAPABILITY' // 左侧竖排标题（原组件同名 prop，默认 "Testimonials"）
 const DURATION = 6000 // 自动切换间隔（原组件 duration 默认 6000）
 
+// 每项配一张图。三张都由生成图裁掉右下角水印后转成 WebP（1024x920，62~176 KB）：
+//   策略引擎 → 线框多面体核心 + 轨道节点    命名管道 → 等距玻璃管道 + 数据流
+//   离线校验 → 线框钥匙 + 一圈虚线环
 const items = [
   {
     quote: '负责信号判定、仓位管理与下单。所有决策逻辑集中在一处，便于回测与版本管理。',
     author: '主控',
     role: '风控内置',
     company: '策略引擎',
+    image: '/images/capability/engine.webp',
   },
   {
     quote: '通过命名管道直驱终端，跳过轮询与文件落地，把指令在毫秒级送达每一台机器。',
     author: '跟随端',
     role: '多端同步',
     company: '命名管道',
+    image: '/images/capability/pipeline.webp',
   },
   {
     quote: '离线激活码，绑定账号、经纪商与有效期。一次编译分发所有客户，按需发码即可。',
     author: '授权',
     role: '按客户发码',
     company: '离线校验',
+    image: '/images/capability/license.webp',
   },
 ]
 
@@ -89,6 +102,9 @@ function frame(now) {
     // 原映射：sprung 值 / 200 * 20（纵向 * 10），夹紧到 ±20 / ±10
     el.style.setProperty('--num-x', `${clamp((axis.x.cur / 200) * 20, -20, 20).toFixed(2)}px`)
     el.style.setProperty('--num-y', `${clamp((axis.y.cur / 200) * 10, -10, 10).toFixed(2)}px`)
+    // 图片走同一根鼠标量，但更轻、方向相反：一动鼠标，超大序号与图片各朝一边，纵深就出来了
+    el.style.setProperty('--cap-mx', `${clamp((axis.x.cur / 200) * -9, -9, 9).toFixed(2)}px`)
+    el.style.setProperty('--cap-my', `${clamp((axis.y.cur / 200) * -7, -7, 7).toFixed(2)}px`)
   }
 
   // 还没停就继续跑；静止后自动收手，不空转
@@ -122,6 +138,40 @@ function onLeave() {
   axis.x.tgt = 0
   axis.y.tgt = 0
   kick()
+}
+
+// ---------------------------- 滚动视差 + 图片入场 ----------------------------
+// 两列反向位移：文字慢、图片快（数值是"整段穿过视口"的总行程，两列相差 42px）。
+// 图片那句"由透明缩小逐渐放大"由同一支进度驱动：进入阶段 opacity 0 → 1、scale 0.88 → 1，
+// 走完之后保持不变，只留视差。
+//
+// 变量写在 .dt 上、由子元素继承，直接 setProperty 不走响应式 —— 和首屏 veil 同一套做法，
+// 否则滚动里每帧都要白跑一遍组件渲染。
+const TEXT_TRAVEL = 16 // 文字列行程(px)，取负方向
+const MEDIA_TRAVEL = 26 // 图片列行程(px)
+const ENTER_SPAN = 0.6 // 走完进入段的多大比例就算入场完成（0.6 → 走 60% 时已完全显现）
+
+let sraf = 0
+
+function applyScroll() {
+  sraf = 0
+  const el = stageRef.value
+  if (!el || reduce.value) return
+  const r = el.getBoundingClientRect()
+  const vh = window.innerHeight || 1
+  // p: -1 = 整段还在视口下方，0 = 与视口居中，1 = 整段已越过视口
+  const raw = (vh / 2 - (r.top + r.height / 2)) / ((vh + r.height) / 2 || 1)
+  const p = raw < -1 ? -1 : raw > 1 ? 1 : raw
+  const enter = Math.max(0, Math.min(1, (p + 1) / ENTER_SPAN))
+  el.style.setProperty('--cap-text-y', `${(-TEXT_TRAVEL * p).toFixed(2)}px`)
+  el.style.setProperty('--cap-media-y', `${(MEDIA_TRAVEL * p).toFixed(2)}px`)
+  el.style.setProperty('--cap-media-o', enter.toFixed(3))
+  el.style.setProperty('--cap-media-s', (0.88 + 0.12 * enter).toFixed(4))
+}
+
+function onScroll() {
+  if (sraf) return
+  sraf = requestAnimationFrame(applyScroll)
 }
 
 // ---------------------------- 自动轮播 ----------------------------
@@ -165,6 +215,18 @@ onMounted(() => {
     if (stageRef.value) io.observe(stageRef.value)
   }
 
+  // 三张图先取回来：不预热的话，第一次自动换图会先空一帧再蹦出来
+  items.forEach((it) => {
+    const im = new Image()
+    im.src = it.image
+  })
+
+  // 视差进度：先算一次（页面可能带着滚动偏移刷新进来），再挂监听。
+  // 视口高度变了进度也得重算，所以 resize 一并挂上。
+  applyScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('resize', onScroll, { passive: true })
+
   schedule()
 })
 
@@ -172,7 +234,10 @@ onBeforeUnmount(() => {
   clearTimeout(timer)
   clearTimeout(fallback)
   if (raf) cancelAnimationFrame(raf)
+  if (sraf) cancelAnimationFrame(sraf)
   if (io) io.disconnect()
+  window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('resize', onScroll)
 })
 </script>
 
@@ -270,6 +335,25 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
+
+          <!-- 右列：图片。两层变换相乘，各管一段：
+               .dt__media-move 承接「滚动视差 + 入场放大」（脚本写 --cap-media-* 变量），
+               img 自己只负责换图时的那次缩放，两者互不覆盖。 -->
+          <div class="dt__media">
+            <div class="dt__media-move">
+              <Transition name="dt-media" mode="out-in">
+                <img
+                  :key="active"
+                  class="dt__img"
+                  :src="cur.image"
+                  :alt="`${cur.company} 示意图`"
+                  width="1024"
+                  height="920"
+                  decoding="async"
+                />
+              </Transition>
+            </div>
+          </div>
         </div>
 
         <!-- 底部跑马灯 -->
@@ -287,7 +371,9 @@ onBeforeUnmount(() => {
 .cap__head {
   max-width: 640px;
 }
-
+.cap{
+  padding-top: 0;
+}
 /* 舞台：原组件是 min-h-screen 居中，这里收成一个区块，留出足够高度放那个大数字 */
 .dt {
   --num-x: 0px;
@@ -319,11 +405,16 @@ onBeforeUnmount(() => {
   color: rgba(255, 255, 255, 0.06); /* 原组件 text-foreground/6 */
 }
 
-/* ---------------------------- 两列布局 ---------------------------- */
+/* ---------------------------- 三列：细轨 / 文字 / 图片 ---------------------------- */
+/* 列间距统一由 gap 给，所以 .dt__side 不再自己垫 padding-right、
+   .dt__main 也不再自己垫 padding-left —— 否则两处叠加会空出一大块。 */
 .dt__row {
   position: relative;
   z-index: 1;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.86fr);
+  gap: clamp(24px, 3.2vw, 52px);
+  align-items: center;
   padding-left: clamp(20px, 3vw, 44px);
 }
 
@@ -332,7 +423,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding-right: clamp(20px, 3.4vw, 54px);
   border-right: 1px solid var(--line);
 }
 
@@ -365,9 +455,60 @@ onBeforeUnmount(() => {
 }
 
 .dt__main {
-  flex: 1;
   min-width: 0;
-  padding: clamp(8px, 1.4vw, 20px) 0 clamp(8px, 1.4vw, 20px) clamp(22px, 3.6vw, 58px);
+  /* 左右留白交给 .dt__row 的列间距，这里只留上下 */
+  padding: clamp(8px, 1.4vw, 20px) 0;
+  /* 滚动视差：与图片列反向位移（脚本写 --cap-text-y） */
+  transform: translate3d(0, var(--cap-text-y, 0px), 0);
+  will-change: transform;
+}
+
+/* ---------------------------- 右列：图片 ---------------------------- */
+/* 两层变换相乘，各管一段，互不覆盖：
+   .dt__media-move  滚动视差（--cap-media-y）+ 入场放大（--cap-media-s / -o）+ 鼠标视差
+   img              只在换图时缩放一次（见下方 .dt-media-* 过渡） */
+.dt__media {
+  position: relative;
+}
+
+.dt__media-move {
+  transform: translate3d(
+      var(--cap-mx, 0px),
+      calc(var(--cap-media-y, 0px) + var(--cap-my, 0px)),
+      0
+    )
+    scale(var(--cap-media-s, 1));
+  opacity: var(--cap-media-o, 1);
+  will-change: transform, opacity;
+}
+
+.dt__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1024 / 920;
+  object-fit: cover;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  /* 图本身就是深底，这条底色只用于加载完成前的空档 */
+  background: #06070d;
+}
+
+/* 换图：旧图淡出并微微放大，新图"由透明缩小逐渐放大"。
+   （入场阶段的那次放大在 .dt__media-move 上，由滚动进度驱动） */
+.dt-media-enter-active {
+  transition: opacity 0.55s var(--ease), transform 0.8s var(--ease);
+}
+.dt-media-leave-active {
+  transition: opacity 0.35s var(--ease), transform 0.5s var(--ease);
+}
+.dt-media-enter-from {
+  opacity: 0;
+  transform: scale(0.94);
+}
+.dt-media-leave-to {
+  opacity: 0;
+  transform: scale(1.03);
 }
 
 /* ---------------------------- 公司胶囊 ---------------------------- */
@@ -625,10 +766,10 @@ onBeforeUnmount(() => {
   .dt__side {
     display: none;
   }
+  /* 收成单列：文字在上、图片在下 */
   .dt__row {
-    padding-left: 0;
-  }
-  .dt__main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(24px, 5vw, 40px);
     padding-left: 0;
   }
   .dt__num {
@@ -649,6 +790,15 @@ onBeforeUnmount(() => {
   }
   .dt__ticker-track {
     animation: none;
+  }
+  /* 视差与入场放大一并关掉（脚本此时也不再写变量，这里是兜住内联残留值） */
+  .dt__main,
+  .dt__media-move {
+    transform: none;
+  }
+  .dt-media-enter-active,
+  .dt-media-leave-active {
+    transition: none;
   }
 }
 </style>
