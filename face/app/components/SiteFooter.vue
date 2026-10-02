@@ -25,10 +25,16 @@ const year = new Date().getFullYear()
 const MARK = '南门拈星'
 const letters = [...MARK]
 
-const nav = [
-  { label: '理念', href: '#about' },
-  { label: '能力', href: '#capability' },
-  { label: '联系', href: '#contact' },
+// 页脚目录。原来这里是「理念 / 能力 / 联系」三项，按要求换成下面这五项。
+// 每一项都指向站内**已有**区块，不留死链：领取与反馈落到联系区，
+// 项目 / 产品介绍落到理念与能力区。
+// 博客 / 论坛 / 回测报告还在计划里，等页面做出来在这里追加即可。
+const dir = [
+  { label: '观摩领取', href: '#contact' },
+  { label: '测试领取', href: '#contact' },
+  { label: '项目介绍', href: '#about' },
+  { label: '产品介绍', href: '#capability' },
+  { label: '问题反馈', href: '#contact' },
 ]
 
 // ---------------------------- 可调参数 ----------------------------
@@ -291,6 +297,12 @@ onBeforeUnmount(() => {
 
 <template>
   <footer class="ftr">
+    <!-- 目录：五项平铺，全部指向站内已有区块（不留死链）。
+         以后有了博客 / 论坛 / 回测报告的页面，往这里追加入口即可。 -->
+    <nav class="container ftr__dir" aria-label="站内目录">
+      <a v-for="l in dir" :key="l.label" :href="l.href">{{ l.label }}</a>
+    </nav>
+
     <!-- 信息条（原先这里还有一行「获取授权激活码」的收尾 CTA，已按要求去掉；
          与上方区块的分隔线由本条自己的 border-top 提供，不受影响） -->
     <div class="container ftr__bar">
@@ -307,28 +319,28 @@ onBeforeUnmount(() => {
         <span class="ftr__copy">© {{ year }} 南门拈星</span>
       </div>
 
-      <nav class="ftr__nav">
-        <a v-for="l in nav" :key="l.href" :href="l.href">{{ l.label }}</a>
-        <button type="button" class="ftr__top" @click="toTop">
-          回到顶部
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M12 18V6M5.5 12.5 12 6l6.5 6.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
-      </nav>
+      <!-- 回到顶部：纯图标，不带文字（导航已移到上方目录行，
+           原来挂在它左侧的「理念 / 能力 / 联系」三项按要求去掉）。
+           视觉隐藏了文字，但 aria-label / title 仍给读屏与悬停提示。 -->
+      <button
+        type="button"
+        class="ftr__top"
+        aria-label="回到顶部"
+        title="回到顶部"
+        @click="toTop"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 18V6M5.5 12.5 12 6l6.5 6.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
     </div>
-
-    <p class="container ftr__note">
-      本站内容仅为技术介绍，不构成任何投资建议。交易有风险，过往表现不代表未来收益。
-      激活码按账号、经纪商与有效期签发。
-    </p>
 
     <!-- 字标：电子故障风（红紫色差 + 间歇爆发 + 切片错位） -->
     <div class="ftr__mark">
@@ -337,6 +349,12 @@ onBeforeUnmount(() => {
       </div>
       <span class="ftr__sr">{{ letters.join('') }}</span>
     </div>
+
+    <!-- 免责声明：按要求挪到页脚最下方（原先在信息条与字标之间） -->
+    <p class="container ftr__note">
+      本站内容仅为技术介绍，不构成任何投资建议。交易有风险，过往表现不代表未来收益。
+      激活码按账号、经纪商与有效期签发。
+    </p>
   </footer>
 </template>
 
@@ -388,44 +406,49 @@ onBeforeUnmount(() => {
   color: #5a6178;
 }
 
-.ftr__nav {
+/* ---------------------------- 目录 ---------------------------- */
+/* 五项平铺，窄屏自动换行。原先是 .ftr__nav 那三个区块链接，已替换。 */
+.ftr__dir {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 12px 26px;
-  font-size: 13px;
+  gap: 12px 34px;
+  padding-top: clamp(24px, 3.4vw, 40px);
+  padding-bottom: clamp(18px, 2.4vw, 28px);
+  font-size: 13.5px;
 }
 
-.ftr__nav a {
+.ftr__dir a {
   color: var(--text-dim);
   transition: color 0.35s var(--ease);
 }
 
-.ftr__nav a:hover {
-  color: var(--text);
+.ftr__dir a:hover {
+  color: var(--cyan);
 }
 
 .ftr__top {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
   padding: 0;
-  border: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
   background: none;
-  font: inherit;
-  font-size: 13px;
-  color: var(--muted);
+  color: var(--text-dim);
   cursor: pointer;
-  transition: color 0.35s var(--ease);
+  transition: color 0.35s var(--ease), border-color 0.35s var(--ease);
 }
 
 .ftr__top:hover {
   color: var(--cyan);
+  border-color: var(--cyan);
 }
 
 .ftr__top svg {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   transition: transform 0.4s var(--ease);
 }
 
@@ -435,6 +458,8 @@ onBeforeUnmount(() => {
 
 .ftr__note {
   margin: 0;
+  /* 现在排在青色字标之下，所以补一段上边距，右下角收尾 */
+  padding-top: clamp(24px, 3vw, 38px);
   padding-bottom: 44px;
   max-width: 78ch;
   font-size: 12.5px;
