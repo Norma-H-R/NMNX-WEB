@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 const solid = ref(false)
+const headerRef = ref(null)
 
 const nav = [
   { label: '理念', href: '#about' },
@@ -9,20 +10,39 @@ const nav = [
   { label: '联系', href: '#contact' },
 ]
 
+// ---------------------------------------------------------------------------
+// 底衬浓度用 CSS 变量 --hdr-p 逐帧写，不走响应式（滚动里每帧都在变）。
+//   0 = 页面顶部（最薄）  1 = 已滚开（稍厚）
+// 走响应式等于每帧白跑一遍组件渲染，所以只有 solid 这个布尔才交给响应式。
+// ---------------------------------------------------------------------------
+let raf = 0
+
+function apply() {
+  raf = 0
+  const y = window.scrollY
+  solid.value = y > 24
+  const el = headerRef.value
+  if (el) el.style.setProperty('--hdr-p', Math.min(1, y / 140).toFixed(3))
+}
+
 function onScroll() {
-  solid.value = window.scrollY > 24
+  if (raf) return
+  raf = requestAnimationFrame(apply)
 }
 
 onMounted(() => {
-  onScroll()
+  apply()
   window.addEventListener('scroll', onScroll, { passive: true })
 })
 
-onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
+onBeforeUnmount(() => {
+  if (raf) cancelAnimationFrame(raf)
+  window.removeEventListener('scroll', onScroll)
+})
 </script>
 
 <template>
-  <header class="hdr" :class="{ 'is-solid': solid }">
+  <header ref="headerRef" class="hdr" :class="{ 'is-solid': solid }">
     <div class="hdr__inner container">
       <a class="brand" href="#top">
         <svg class="brand__mark" viewBox="0 0 24 24" aria-hidden="true">
@@ -52,15 +72,12 @@ onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
   left: 0;
   right: 0;
   z-index: 50;
-  transition: background 0.5s var(--ease), border-color 0.5s var(--ease),
-    backdrop-filter 0.5s var(--ease);
+  /* 底衬浓度交给 --hdr-p 逐帧插值（见脚本），这里不再为它写过渡，只留底边线 */
+  transition: border-color 0.5s var(--ease);
   border-bottom: 1px solid transparent;
 }
 
 .hdr.is-solid {
-  background: rgba(6, 7, 13, 0.72);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
   border-bottom-color: var(--line);
 }
 
@@ -70,22 +87,22 @@ onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
   justify-content: space-between;
   gap: 24px;
   height: 76px;
-  /* 默认就垫一层很轻的磨砂：首屏的点阵会从这一条"打穿"，压着品牌名与导航文字，
-     没有底衬就容易看不清。
-     滚动过 24px 后由 .hdr.is-solid 接管整条更强的磨砂，这里退回全透明，
-     免得两层叠成一块更重的色块。
-     用 blur(0px)/saturate(100%) 而不是 none —— none 无法参与过渡，会直接跳。 */
-  background: rgba(6, 7, 13, 0.42);
-  -webkit-backdrop-filter: blur(9px) saturate(130%);
-  backdrop-filter: blur(9px) saturate(130%);
-  transition: background 0.5s var(--ease), backdrop-filter 0.5s var(--ease);
-  -webkit-transition: background 0.5s var(--ease), -webkit-backdrop-filter 0.5s var(--ease);
-}
+  /* 常驻底衬：首屏的点阵会从这一条打穿、压着品牌名与导航文字，没有底衬读不清。
+     浓度由 --hdr-p 连续插值（静止 0.30/6px → 滚开 0.72/16px），只此一层。
 
-.hdr.is-solid .hdr__inner {
-  background: transparent;
-  -webkit-backdrop-filter: blur(0px) saturate(100%);
-  backdrop-filter: blur(0px) saturate(100%);
+     之前那版是两层状态切换：滚开时整条 .hdr 磨砂、这条退回全透明；回到顶部时反过来
+     （整条退掉、这条重新磨砂）。于是下滑再上滑到顶，这一条就是「先变透明、再重新
+     磨砂」——看着像逻辑出错。现在这条永远有底衬，只在浓度上连续变化，不存在状态切换。
+     注：别把原因写成 backdrop-filter 的 none 不可插值 —— 实测 Chrome 能把
+     blur(18px) ↔ none 平滑插值，跳变另有其因。 */
+  background: rgba(6, 7, 13, calc(0.3 + var(--hdr-p, 0) * 0.42));
+  -webkit-backdrop-filter: blur(calc(6px + var(--hdr-p, 0) * 10px))
+    saturate(calc(120% + var(--hdr-p, 0) * 30%));
+  backdrop-filter: blur(calc(6px + var(--hdr-p, 0) * 10px))
+    saturate(calc(120% + var(--hdr-p, 0) * 30%));
+  /* 玻璃的镜面高光：顶边一条内高光。这是「液态玻璃」里最出玻璃感的一笔，
+     成本几乎为零，先垫上。 */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .brand {
