@@ -169,6 +169,15 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 末卡到下一块标题的间距，比全站 .section 的标准下内边距（clamp(96px,15vh,190px)）要小。
+   原因：这一块末尾是整叠卡片，末卡下方本来就自带 96px 的布局余量（卡片高 74%、顶偏 14%），
+   再叠一整个 section 级下内边距就重复了 —— 实测会是 96 + 121 + 121 = 338，
+   比全站其它区块之间的 293px 还大。
+   这里按 9.5vh 给（标准值的 0.63 倍），实测让这段间距落在 293px，与"能力→联系"对齐。 */
+.about {
+  padding-bottom: clamp(64px, 9.5vh, 110px);
+}
+
 .about__head {
   max-width: 720px;
 }
