@@ -70,8 +70,16 @@ const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255].map((v) => v * DOT_DIM) // 
 const COL_WHITE = [1.0, 1.0, 1.0].map((v) => v * DOT_DIM)
 const COL_BG = [6 / 255, 7 / 255, 13 / 255] // --bg
 
-const DPR_MAX = 1.5 // 输出本就是 6px 方块，高 DPR 无收益
-const FLUID_SCALE = 0.5 // 流体那趟降半分辨率渲染（流体很平滑，肉眼无差，省 4 倍）
+// 画布的内部渲染倍率（相对 CSS 像素）。1 = 1:1；< 1 就是降分辨率渲染。
+//
+// 为什么要降：这条画布的开销几乎正比于像素数（实测 0.5M 像素 ~47fps、2.07M ~13.7fps、
+// 4.7M ~8.4fps），而它铺满整个首屏。倍率是按平方省的：0.6 → 约 2.8 倍。
+// 点阵本来就是 7px 的方块，降倍率只让方块边缘软一点，疏密与尺寸都不变。
+//
+// 刻意不再跟随 devicePixelRatio：方块尺寸应以 CSS 像素为准。原来跟着 DPR 走，
+// hi-DPI 屏上 DPR 1.5 时方块只有 4.67 CSS px —— 屏幕越细腻点越小，而且还更费。
+const RENDER_SCALE = 0.6
+const FLUID_SCALE = 0.5 // 流体那趟再降半分辨率渲染（流体很平滑，肉眼无差，省 4 倍）
 
 // ---------------------------- 着色器 ----------------------------
 
@@ -146,9 +154,10 @@ uniform vec2 uMouse;
 uniform float uMouseRadius;
 uniform float uMouseStrength;
 
-#define PIX ${PIX.toFixed(1)}
-#define GAP ${GAP.toFixed(1)}
-#define FLOW_AMP ${FLOW_AMP.toFixed(1)}
+// 这三个都是"画布像素"单位，必须跟着渲染倍率一起缩，屏幕上的尺寸才不会变
+#define PIX ${(PIX * RENDER_SCALE).toFixed(3)}
+#define GAP ${(GAP * RENDER_SCALE).toFixed(3)}
+#define FLOW_AMP ${(FLOW_AMP * RENDER_SCALE).toFixed(3)}
 #define THRESHOLD ${THRESHOLD.toFixed(4)}
 #define JITTER ${JITTER.toFixed(4)}
 #define ACCENT_RATIO ${ACCENT_RATIO.toFixed(4)}
@@ -282,6 +291,7 @@ const canvasRef = ref(null)
 let gl = null
 let raf = 0
 let startedAt = 0
+let ready = false
 
 let fluidProg = null
 let pixelProg = null
@@ -364,11 +374,10 @@ function initGL() {
 function resize() {
   const el = canvasRef.value
   if (!el || !gl) return
-  const dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX)
   const w = el.clientWidth
   const h = el.clientHeight
-  el.width = Math.round(w * dpr)
-  el.height = Math.round(h * dpr)
+  el.width = Math.max(1, Math.round(w * RENDER_SCALE))
+  el.height = Math.max(1, Math.round(h * RENDER_SCALE))
 
   fboW = Math.max(1, Math.round(el.width * FLUID_SCALE))
   fboH = Math.max(1, Math.round(el.height * FLUID_SCALE))
@@ -411,6 +420,12 @@ function drawFrame(t) {
   gl.uniform1f(pixelU.uMouseRadius, MOUSE_R)
   gl.uniform1f(pixelU.uMouseStrength, MOUSE_K)
   gl.drawArrays(gl.TRIANGLES, 0, 3)
+
+  // 第一帧真的画出来了才淡入，避免出现"一片空"的中间态
+  if (!ready) {
+    ready = true
+    el.classList.add('is-ready')
+  }
 }
 
 function frame(now) {
@@ -545,5 +560,19 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100svh;
   pointer-events: none;
+  /* 首帧画出来之前先隐身，避免"文字先出来、点阵过一会儿才冒出来"那种突兀感
+     （实测冷缓存下两者相隔约 130ms，缓存暖时只有 3ms）。 */
+  opacity: 0;
+  transition: opacity 0.45s var(--ease);
+}
+
+.dotmatrix.is-ready {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dotmatrix {
+    transition: none;
+  }
 }
 </style>
