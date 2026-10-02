@@ -1,13 +1,56 @@
 <script setup>
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+
 // 入场动画是纯 CSS 的（见下方 style），这里只负责把标题拆成单字。
 // 每个字带一个 --i 序号，CSS 用它算错开延迟。
 const title = '南门拈星'
 const chars = [...title]
+
+// ---------------------------------------------------------------------------
+// 黑层/磨砂的强度 = 滚动进度 --hero-p（0 → 1）。
+//
+// 静止：只在下方压黑、标题那一带几乎通透，另加一丁点磨砂把主体文字托出来；
+// 下滚：整层加深成完整磨砂，顺势过渡到下一屏底色。
+//
+// 用 setProperty 直接写 CSS 变量，不走响应式 —— 滚动里每帧都在变，
+// 走响应式等于每帧白跑一遍组件渲染。
+// ---------------------------------------------------------------------------
+const heroRef = ref(null)
+// 走完大约 3/4 屏就到达最强，免得整层还没加深 hero 就已经滚出去了
+const RAMP = 0.75
+let raf = 0
+
+function applyProgress() {
+  raf = 0
+  const el = heroRef.value
+  if (!el) return
+  const vh = window.innerHeight || 1
+  const p = Math.min(1, Math.max(0, window.scrollY / (vh * RAMP)))
+  el.style.setProperty('--hero-p', p.toFixed(3))
+}
+
+function onScroll() {
+  if (raf) return
+  raf = requestAnimationFrame(applyProgress)
+}
+
+onMounted(() => {
+  applyProgress()
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('resize', onScroll, { passive: true })
+})
+
+onBeforeUnmount(() => {
+  if (raf) cancelAnimationFrame(raf)
+  window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('resize', onScroll)
+})
 </script>
 
 <template>
-  <section id="top" class="hero">
-    <!-- 渐变磨砂黑：下黑上透，只压这一屏；文字落在它上面才读得清 -->
+  <section id="top" ref="heroRef" class="hero">
+    <!-- 渐变磨砂黑。强度由 --hero-p（滚动进度）驱动，见脚本：
+         静止时压黑只在下方、标题区几乎通透；下滚时整层加深成完整磨砂。 -->
     <div class="hero__veil" aria-hidden="true" />
 
     <div class="container hero__inner">
@@ -55,29 +98,43 @@ const chars = [...title]
   padding: 120px 0 clamp(72px, 9vh, 116px);
 }
 
-/* 渐变磨砂黑：下黑、上透明。
-   两点说明：
-   1. 用 --bg 而不是纯 #000 —— 底色和页面其它区块一致，滚到底部接下一屏时不会有接缝；
-   2. backdrop-filter 把背后的点阵糊掉（这才是"磨砂"），再用 mask 把那层模糊限制在
-      黑色出现的那半屏，上面保持通透。 */
+/* 渐变磨砂黑。强度由 --hero-p（滚动进度 0→1，见脚本）驱动。
+   静止（--hero-p:0）：压黑只落在下方，标题那一段几乎通透，只留一丁点磨砂
+                       把主体文字从点阵里托出来 —— 不能压太重，否则标题会被埋掉；
+   下滚（--hero-p:1）：整层加深成完整磨砂，顺势过渡到下一屏底色，不出现跳变。
+
+   三点说明：
+   1. 底色用 --bg(#06070d) 而不是纯 #000 —— 和页面其它区块一致，接下一屏不会有接缝；
+   2. 磨砂是 backdrop-filter 真把背后点阵糊掉，不是画一层灰；
+   3. 之前把 mask 用在模糊上、而渐变一路压到标题区（标题处在距底 35%~57%，
+      那里还留着 0.7~0.36 的黑），所以标题被埋了。现在改成"整层清淡半透明 +
+      只在下方加重"，标题区只受很轻的一层。 */
 .hero__veil {
   position: absolute;
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  /* 半透明盖住一点：静止 0.14 → 滚到底 0.86 */
+  background: rgba(6, 7, 13, calc(0.14 + var(--hero-p, 0) * 0.72));
+  /* 磨砂：静止 1.5px（几乎看不出）→ 滚到底 11.5px（完整磨砂） */
+  -webkit-backdrop-filter: blur(calc(1.5px + var(--hero-p, 0) * 10px));
+  backdrop-filter: blur(calc(1.5px + var(--hero-p, 0) * 10px));
+}
+
+/* 压黑只集中在下半屏，往上很快收干净：标题上沿（距底约 57%）处已经基本清零 */
+.hero__veil::before {
+  content: '';
+  position: absolute;
+  inset: 0;
   background: linear-gradient(
     to top,
-    rgba(6, 7, 13, 0.98) 0%,
-    rgba(6, 7, 13, 0.93) 20%,
-    rgba(6, 7, 13, 0.7) 42%,
-    rgba(6, 7, 13, 0.36) 64%,
-    rgba(6, 7, 13, 0.1) 84%,
-    rgba(6, 7, 13, 0) 100%
+    rgba(6, 7, 13, 0.92) 0%,
+    rgba(6, 7, 13, 0.66) 18%,
+    rgba(6, 7, 13, 0.34) 36%,
+    rgba(6, 7, 13, 0.14) 54%,
+    rgba(6, 7, 13, 0.04) 74%,
+    rgba(6, 7, 13, 0) 92%
   );
-  -webkit-backdrop-filter: blur(16px) saturate(115%);
-  backdrop-filter: blur(16px) saturate(115%);
-  -webkit-mask-image: linear-gradient(to top, #000 10%, rgba(0, 0, 0, 0.6) 48%, transparent 88%);
-  mask-image: linear-gradient(to top, #000 10%, rgba(0, 0, 0, 0.6) 48%, transparent 88%);
 }
 
 .hero__inner {
