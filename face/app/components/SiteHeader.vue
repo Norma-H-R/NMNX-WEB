@@ -70,6 +70,22 @@ onBeforeUnmount(() => window.removeEventListener('scroll', onScroll))
   justify-content: space-between;
   gap: 24px;
   height: 76px;
+  /* 默认就垫一层很轻的磨砂：首屏的点阵会从这一条"打穿"，压着品牌名与导航文字，
+     没有底衬就容易看不清。
+     滚动过 24px 后由 .hdr.is-solid 接管整条更强的磨砂，这里退回全透明，
+     免得两层叠成一块更重的色块。
+     用 blur(0px)/saturate(100%) 而不是 none —— none 无法参与过渡，会直接跳。 */
+  background: rgba(6, 7, 13, 0.42);
+  -webkit-backdrop-filter: blur(9px) saturate(130%);
+  backdrop-filter: blur(9px) saturate(130%);
+  transition: background 0.5s var(--ease), backdrop-filter 0.5s var(--ease);
+  -webkit-transition: background 0.5s var(--ease), -webkit-backdrop-filter 0.5s var(--ease);
+}
+
+.hdr.is-solid .hdr__inner {
+  background: transparent;
+  -webkit-backdrop-filter: blur(0px) saturate(100%);
+  backdrop-filter: blur(0px) saturate(100%);
 }
 
 .brand {

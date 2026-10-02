@@ -116,9 +116,9 @@ onBeforeUnmount(() => {
   pointer-events: none;
   /* 半透明盖住一点：静止 0.14 → 滚到底 0.86 */
   background: rgba(6, 7, 13, calc(0.14 + var(--hero-p, 0) * 0.72));
-  /* 磨砂：静止 1.5px（几乎看不出）→ 滚到底 11.5px（完整磨砂） */
-  -webkit-backdrop-filter: blur(calc(1.5px + var(--hero-p, 0) * 10px));
-  backdrop-filter: blur(calc(1.5px + var(--hero-p, 0) * 10px));
+  /* 磨砂：静止 0（不模糊，正常显示）→ 滚到底 11.5px */
+  -webkit-backdrop-filter: blur(calc(var(--hero-p, 0) * 11.5px));
+  backdrop-filter: blur(calc(var(--hero-p, 0) * 11.5px));
 }
 
 /* 压黑只集中在下半屏，往上很快收干净：标题上沿（距底约 57%）处已经基本清零 */
