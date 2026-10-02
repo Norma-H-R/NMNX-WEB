@@ -25,16 +25,22 @@ const year = new Date().getFullYear()
 const MARK = '南门拈星'
 const letters = [...MARK]
 
-// 页脚目录。原来这里是「理念 / 能力 / 联系」三项，按要求换成下面这五项。
-// 每一项都指向站内**已有**区块，不留死链：领取与反馈落到联系区，
+// 页脚目录。原来这里是「理念 / 能力 / 联系」三项，按要求换掉。
+// 有 href 的指向站内**已有**区块，不留死链：领取与反馈落到联系区，
 // 项目 / 产品介绍落到理念与能力区。
-// 博客 / 论坛 / 回测报告还在计划里，等页面做出来在这里追加即可。
+// 博客 / 论坛 / 回测报告 / 文章这四项页面还没做，先只留位、不给链接 ——
+// 渲染成不可点的灰项（.ftr__soon），避免点了跳空。
+// 页面做出来之后，给对应项补上 href 就自动变成可点链接，模板不用改。
 const dir = [
   { label: '观摩领取', href: '#contact' },
   { label: '测试领取', href: '#contact' },
   { label: '项目介绍', href: '#about' },
   { label: '产品介绍', href: '#capability' },
   { label: '问题反馈', href: '#contact' },
+  { label: '博客' },
+  { label: '论坛' },
+  { label: '回测报告' },
+  { label: '文章' },
 ]
 
 // ---------------------------- 可调参数 ----------------------------
@@ -307,12 +313,6 @@ onBeforeUnmount(() => {
 
 <template>
   <footer class="ftr">
-    <!-- 目录：五项平铺，全部指向站内已有区块（不留死链）。
-         以后有了博客 / 论坛 / 回测报告的页面，往这里追加入口即可。 -->
-    <nav class="container ftr__dir" aria-label="站内目录">
-      <a v-for="l in dir" :key="l.label" :href="l.href">{{ l.label }}</a>
-    </nav>
-
     <!-- 信息条（原先这里还有一行「获取授权激活码」的收尾 CTA，已按要求去掉；
          与上方区块的分隔线由本条自己的 border-top 提供，不受影响） -->
     <div class="container ftr__bar">
@@ -351,6 +351,16 @@ onBeforeUnmount(() => {
         </svg>
       </button>
     </div>
+
+    <!-- 目录：按要求紧贴在免责声明上方。
+         有 href 的渲染成可点链接；博客 / 论坛 / 回测报告 / 文章还没有页面，
+         渲染成不可点的灰项 .ftr__soon，免得点了跳空。 -->
+    <nav class="container ftr__dir" aria-label="站内目录">
+      <template v-for="l in dir" :key="l.label">
+        <a v-if="l.href" :href="l.href">{{ l.label }}</a>
+        <span v-else class="ftr__soon" title="筹备中">{{ l.label }}</span>
+      </template>
+    </nav>
 
     <!-- 免责声明：放在字标之上 —— 字标才是页脚最下方那一块 -->
     <p class="container ftr__note">
@@ -417,12 +427,13 @@ onBeforeUnmount(() => {
 }
 
 /* ---------------------------- 目录 ---------------------------- */
-/* 五项平铺，窄屏自动换行。原先是 .ftr__nav 那三个区块链接，已替换。 */
+/* 排在信息条与免责声明之间，窄屏自动换行。
+   原先是 .ftr__nav 那三个区块链接，已替换成下面这些入口。 */
 .ftr__dir {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 34px;
-  padding-top: clamp(24px, 3.4vw, 40px);
+  padding-top: clamp(18px, 2.4vw, 28px);
   padding-bottom: clamp(18px, 2.4vw, 28px);
   font-size: 13.5px;
 }
@@ -434,6 +445,13 @@ onBeforeUnmount(() => {
 
 .ftr__dir a:hover {
   color: var(--cyan);
+}
+
+/* 尚未上线的目录项（博客 / 论坛 / 回测报告 / 文章）：不可点，颜色再压一档，
+   与可点项一眼区分开。补上 href 后会自动走 .ftr__dir a 的样式。 */
+.ftr__soon {
+  color: #5a6178;
+  cursor: default;
 }
 
 .ftr__top {
