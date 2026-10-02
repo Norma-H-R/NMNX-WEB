@@ -47,6 +47,12 @@ const THRESHOLD = 0.705
 const JITTER = 0.08 // 每块阈值随机量：原版就是 0.08，必须小
 const ACCENT_RATIO = 0.49 // 强调色占比：原版 e1GreenRatio = 0.49
 
+// 蓝/白颜色随时间重掷的速率（每格相位错开，不是整屏同步闪）。
+// 0 = 颜色只跟着云流、永不重掷；调大 = 蓝白换得更勤。
+// 1.0 时节奏已接近白色点自身的出现/消失（实测 1.5s 内约 62% vs 88%）。
+// 别超过 ~2：再快眼睛会把蓝白平均成灰。
+const COLOR_RATE = 1.0
+
 // 鼠标：原版 e1UMouseRadius = 0.3 / e1UMouseStrength = 1.3
 // （它是按距离平滑的 → 会形成一圈圆形渐变；先照搬，之后要删改的就是这里）
 const MOUSE_R = 0.3
@@ -143,6 +149,7 @@ uniform float uMouseStrength;
 #define THRESHOLD ${THRESHOLD.toFixed(4)}
 #define JITTER ${JITTER.toFixed(4)}
 #define ACCENT_RATIO ${ACCENT_RATIO.toFixed(4)}
+#define COLOR_RATE ${COLOR_RATE.toFixed(4)}
 #define MOUSE_R ${MOUSE_R.toFixed(4)}
 #define MOUSE_K ${MOUSE_K.toFixed(2)}
 #define COL_ACCENT vec3(${COL_ACCENT.map((v) => v.toFixed(4)).join(',')})
@@ -224,15 +231,32 @@ void main() {
   vec4 color = texture(uFluid, blockUv);
   float brightness = (color.r + color.g + color.b) / 3.0;
 
-  float rand = e1Random(blockId);
-  float dynamicThreshold = THRESHOLD - JITTER * rand;
+  // 粒子身份 = **流动之后**的格位，而不是固定的屏幕格 blockId。
+  // 原版这里是 e1Random(blockId)：种子绑在屏幕网格上，蓝/白于是成了**一层永远
+  // 不动的固定网纹** —— 白云从上面流过时就成了"白色里透出一层固定的蓝"，看着
+  // 就是蓝色是死的、只有白色在动。改成跟流动绑定的身份后，整个蓝白图案会跟着
+  // 云一起流，蓝点自然就和白点一样在动。
+  vec2 cellId = floor(offsetBlockPos / totalSize);
+
+  // 亮度抖动：只按粒子身份取 → 一个亮着的点在它流动过程中保持稳定，不会原地闪
+  float randJit = e1Random(cellId);
+
+  // 颜色：同一个粒子身份再拌一个"每格相位错开"的时间项 → 过一会儿还会重掷一次
+  // 颜色（COLOR_RATE=0 就纯随流、永不重掷）。蓝和白都是这样随机出现的，没有主次，
+  // 更不是"先有白、白里再挑出蓝"。
+  float rt = time * COLOR_RATE + e1Random(cellId + 0.5) * 37.0;
+  float rc0 = e1Random(cellId + vec2(floor(rt), 0.0));
+  float rc1 = e1Random(cellId + vec2(floor(rt) + 1.0, 0.0));
+  float randCol = mix(rc0, rc1, fract(rt));
+
+  float dynamicThreshold = THRESHOLD - JITTER * randJit;
 
   float dist = distance(blockCenterUV, uMouse);
   float mouseFactor = (1.0 - smoothstep(0.0, MOUSE_R, dist)) * MOUSE_K;
 
   vec3 col = COL_BG;
   if (brightness > dynamicThreshold) {
-    if (rand < ACCENT_RATIO) {
+    if (randCol < ACCENT_RATIO) {
       vec3 c = COL_ACCENT;
       if (mouseFactor > 0.0) c = mix(c, COL_WHITE, mouseFactor);
       col = c;
