@@ -178,7 +178,14 @@ onBeforeUnmount(() => {
 .stack {
   position: relative;
   margin-top: clamp(36px, 5vw, 64px);
-  padding-bottom: 42vh;
+  /* 这里原来有一段 padding-bottom: 42vh 的"尾巴"，别再加回来。
+     它看着像是给吸顶留的滚动空间，其实不是：吸顶元素的活动范围被限制在父元素的
+     **内容盒**内，padding 在内容盒之外，撑不出任何吸顶行程 —— 实测 .stack 高 3558
+     = 卡片 4×805 + 338，那 338 就是它，纯空白。它唯一的作用是把 apply() 里的
+     stackRange（= r.height - innerHeight，含 padding）一起拉长，让缩放动画慢 12%。
+     代价是理念区末尾要多滚近半屏空屏，与下一块的间距达到 685px（同页其它区块 293px）。
+     删掉后：stackRange 按内容高度算（2415），各卡仍在滚进视野时依次缩放到终值，
+     而且 p = 1 恰好落在"四张卡叠齐"那一刻，之后整叠一起滚出，不会先散架再空一屏。 */
 }
 
 /* 每张卡一屏高、吸顶；DOM 顺序靠后的盖在上面 */
