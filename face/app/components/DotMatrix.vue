@@ -21,16 +21,18 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 // ---------------------------- 可调参数 ----------------------------
 
-const SPEED = 0.15 // 流体演化速度
-const DENSITY = 1.3 // 噪声密度（越大云块越小越碎）
-const FREQUENCY = 2.5 // 域扭曲强度（越大浓核与空洞越夸张）
+const SPEED = 0.15 // 流体演化速度 = 粒子出现速率（用户确认保持，勿动）
+const DENSITY = 2.0 // 噪声密度（越大云块越小越碎、粒子越多）
+// 域扭曲强度。注意别调大：太大会把大片屏幕映射到同一小块噪声上，
+// 云会挤成"只有某一侧有"的热点（之前 2.5 就是这个毛病）。
+const FREQUENCY = 0.8
 const FLOW_AMP = 35 // 像素块采样点被流场推开的幅度（像素）
-const PIX = 4 // 方块边长（CSS 像素）
+const PIX = 6 // 方块边长（CSS 像素）：在原来 4 的基础上放大 1.5 倍
 const GAP = 2 // 方块间隙（CSS 像素）
-// 阈值定得很高：只有噪声峰值才出点，于是大片留黑、粒子稀疏成团
-// （浓核 + 空洞 + 游离散点）。调低它就变密、变满。
-const THRESHOLD = 0.74
+// 阈值：越高粒子越稀（只有噪声峰值才出点，形成大片留黑 + 浓核 + 空洞）
+const THRESHOLD = 0.78
 const THR_JITTER = 0.12 // 每块阈值随机抖动，制造噪点边缘与游离散点
+const COLOR_RATE = 0.35 // 粒子自身在白/青之间变换颜色的速率（越大越快）
 const ACCENT_RATIO = 0.45 // 强调色（青）占比，其余为白
 const MOUSE_R = 0.18 // 鼠标影响半径（UV）
 const MOUSE_K = 1.0 // 鼠标变色强度
@@ -76,13 +78,19 @@ uniform vec2 uMouse;  // UV 坐标，y 向上
 #define MOUSE_R ${MOUSE_R.toFixed(4)}
 #define MOUSE_K ${MOUSE_K.toFixed(2)}
 #define THR_LIFT ${THR_LIFT.toFixed(4)}
+#define COLOR_RATE ${COLOR_RATE.toFixed(4)}
 #define COL_ACCENT vec3(${COL_ACCENT.map((v) => v.toFixed(4)).join(',')})
 #define COL_WHITE vec3(${COL_WHITE.map((v) => v.toFixed(4)).join(',')})
 #define COL_BG vec3(${COL_BG.map((v) => v.toFixed(5)).join(',')})
 
-// ---- 值噪声 fbm（自写，IQ 风格 hash）----
+// 值噪声 fbm（自写）。
+// 哈希刻意不用 fract(sin(dot(p, 大常数)))：sin 的参数一大（这里能到上万），
+// float 精度就崩，哈希会退化成带空间条带的伪随机 —— 表现是噪声出现方向性偏差，
+// 云莫名集中在屏幕某一侧。这里用只靠乘加、不碰三角函数的哈希，全精度范围内都稳。
 float vhash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
 }
 
 float vnoise(vec2 p) {
@@ -97,13 +105,15 @@ float vnoise(vec2 p) {
 }
 
 float fbm(vec2 p) {
+  // 八度权重刻意取"平"而不是按 0.5 递减。
+  // 按 0.5 递减时，最低频那层的幅度占了总量的一半以上，极值完全由它决定：
+  // 高阈值下就只剩那几个低频峰，云会聚成几坨、集中在一侧。
+  // 权重取平（和为 1）后极值分布均匀，云才会铺开。
   float v = 0.0;
-  float a = 0.5;
-  for (int i = 0; i < 4; i++) {
-    v += a * vnoise(p);
-    p *= 2.03;
-    a *= 0.5;
-  }
+  v += 0.36 * vnoise(p);
+  v += 0.28 * vnoise(p * 2.03);
+  v += 0.21 * vnoise(p * 4.09);
+  v += 0.15 * vnoise(p * 8.17);
   return v;
 }
 
@@ -120,10 +130,18 @@ void main() {
   vec2 blockUV = (blockId * total + 0.5 * PIX) / uRes;
 
   // ---- 流体：域扭曲 fbm，时间只做垂直漂移 ----
+  // 各向同性映射：uv 两轴都是 0~1，而画布宽高比约 1.76，
+  // 直接用会让噪声横向被拉长、云挤到某一侧。按宽高比校正 x 之后云块接近正方。
+  float asp = uRes.x / uRes.y;
+  vec2 nBase = vec2(blockUV.x * asp, blockUV.y) * DENSITY;
+
   float t = uTime * SPEED;
+  // 漂移以纵向为主，但必须保留一点横向：横向完全静止时，噪声的横向结构是固定的，
+  // 粒子稀疏时就会出现"某几列长期没有云"（看着像只聚在某一侧）。
+  vec2 march = vec2(0.14, 0.22) * t;
   vec2 q = vec2(
-    fbm(blockUV * DENSITY + vec2(0.0, 0.22 * t)),
-    fbm(blockUV * DENSITY + vec2(1.2, -0.31 * t))
+    fbm(nBase + march),
+    fbm(nBase + vec2(1.2, 0.0) - march * vec2(0.5, 1.4))
   );
 
   // ---- 采样点被流场推开（流动感的来源）----
@@ -131,7 +149,8 @@ void main() {
   flow.x *= 0.5; // 弱化横向
   flow.y *= 1.5; // 强化纵向
   vec2 suv = blockUV - flow * (FLOW_AMP / uRes);
-  float val = fbm(suv * DENSITY + q * FREQUENCY);
+  vec2 nSample = vec2(suv.x * asp, suv.y) * DENSITY;
+  float val = fbm(nSample + march + q * FREQUENCY);
 
   // ---- 阈值 + 每块随机抖动 ----
   float rnd = vhash(blockId + 7.0);
@@ -146,9 +165,23 @@ void main() {
 
   vec3 col = COL_BG;
   if (val > thr) {
-    // 鼠标：只做颜色交换
-    float m = (1.0 - smoothstep(0.0, MOUSE_R, distance(uv, uMouse))) * MOUSE_K;
-    col = rnd < ACCENT_RATIO ? mix(COL_ACCENT, COL_WHITE, m) : mix(COL_WHITE, COL_ACCENT, m);
+    // 粒子自身的颜色随时间在白/青之间变换（COLOR_RATE 控制快慢）
+    float phase = fract(rnd * 0.618 + uTime * COLOR_RATE);
+    col = phase < ACCENT_RATIO ? COL_ACCENT : COL_WHITE;
+
+    // 鼠标：把附近粒子整体换成**同一种颜色**。
+    // 这里刻意不用"按距离平滑衰减"——那会插值出一圈圆形渐变的环。
+    // 改成用每块的随机数做二值判断：越靠近光标，被选中的概率越高，
+    // 于是选中区域的边界是随机锯齿（形状随机），每个粒子深浅也随机。
+    float d = distance(uv, uMouse);
+    if (d < MOUSE_R) {
+      float pickShape = vhash(blockId + 31.0);
+      float pickDepth = vhash(blockId + 53.0);
+      float near = 1.0 - d / MOUSE_R;
+      if (pickShape < near * MOUSE_K) {
+        col = COL_ACCENT * (0.45 + 0.55 * pickDepth);
+      }
+    }
   }
 
   // ---- 方块间隙 ----
@@ -236,8 +269,9 @@ function resize() {
 }
 
 function drawFrame(t) {
-  pointer.x += (pointer.tx - pointer.x) * 0.12
-  pointer.y += (pointer.ty - pointer.y) * 0.12
+  // 跟手快一点：之前 0.12 太拖，颜色变化会明显滞后于鼠标
+  pointer.x += (pointer.tx - pointer.x) * 0.3
+  pointer.y += (pointer.ty - pointer.y) * 0.3
   gl.uniform1f(uTime, t)
   gl.uniform2f(uMouse, pointer.x, pointer.y)
   gl.drawArrays(gl.TRIANGLES, 0, 3)
@@ -385,10 +419,14 @@ onBeforeUnmount(() => {
 <style scoped>
 .dotmatrix {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   z-index: 0;
   width: 100%;
-  height: 100%;
+  /* 与第一屏同高。用 svh 而不是 vh，移动端地址栏收起/展开时不会跳。
+     这里刻意不用 inset:0 —— 那会跟着 hero 的内容高度走，
+     hero 内容一长点阵就被拉高，就不是"第一屏"了。 */
+  height: 100svh;
   pointer-events: none;
 }
 </style>
