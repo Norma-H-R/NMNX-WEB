@@ -14,7 +14,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
  *   逐词 variants(delay i*0.05, rotateX90)  每个词一条 keyframes，靠 --i 错开
  *   motion 的 infinite marquee              纯 CSS keyframes 跑马灯
  *
- * 原组件的视觉重心是那个 6% 透明度的**超大序号**，磁性视差主要作用在它身上；
+ * 原组件的视觉重心是那个 6% 透明度的**超大序号**（原版另有一套跟随鼠标的磁性视差，
+ * 本项目按要求已去掉，见下方 stageRef 处的说明）；
  * 左侧竖排标题 + 竖向进度条、公司胶囊、大字引用 + 逐词翻转、作者行 + 展开线、
  * 底部公司跑马灯，都照原样保留。
  *
@@ -70,74 +71,17 @@ const ticker = computed(() => items.map((t) => t.author).join(' • ') + ' • '
 // 断出来的每段仍带标点，正好是"逐词"的粒度：一次翻一个短句，不是翻一个字。
 const words = computed(() => cur.value.quote.split(/(?<=[，。、；：])/).filter(Boolean))
 
-// ---------------------------- 磁性视差 ----------------------------
-// 原组件：useSpring(mouseX, { damping: 25, stiffness: 200 })，
-// 再把 [-200, 200] 映射到 [-20, 20]（横向）/ [-10, 10]（纵向），超出夹紧。
-const K = 200
-const C = 25
+// 舞台元素：既是滚动视差的变量宿主（applyScroll 往它上面写 --cap-*），
+// 也是自动轮播的可见性观察目标（IntersectionObserver 观察它）。
+//
+// 注意：这里原来还有一套「磁性视差」——手写弹簧（damping 25 / stiffness 200）按鼠标位置
+// 写 --num-x/--num-y（超大序号 ±20/±10px）与 --cap-mx/--cap-my（图片 ±9/±7px）。
+// 按要求去掉（跟随鼠标抖动的效果），相关变量、rAF 循环与 mousemove 监听已一并清理，
+// 别再加回来。悬停暂停轮播保留，那是另一件事，见 onLeave / paused。
 const stageRef = ref(null)
-
-const axis = { x: { cur: 0, vel: 0, tgt: 0 }, y: { cur: 0, vel: 0, tgt: 0 } }
-let raf = 0
-let last = 0
-
-const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
-
-function step(a, dt) {
-  // 半隐式欧拉：acc = (-k·x - c·v) / m
-  const acc = (-K * (a.cur - a.tgt) - C * a.vel) / 1
-  a.vel += acc * dt
-  a.cur += a.vel * dt
-}
-
-function frame(now) {
-  raf = 0
-  const dt = Math.min((now - last) / 1000, 0.05) || 0.016
-  last = now
-  step(axis.x, dt)
-  step(axis.y, dt)
-
-  const el = stageRef.value
-  if (el) {
-    // 原映射：sprung 值 / 200 * 20（纵向 * 10），夹紧到 ±20 / ±10
-    el.style.setProperty('--num-x', `${clamp((axis.x.cur / 200) * 20, -20, 20).toFixed(2)}px`)
-    el.style.setProperty('--num-y', `${clamp((axis.y.cur / 200) * 10, -10, 10).toFixed(2)}px`)
-    // 图片走同一根鼠标量，但更轻、方向相反：一动鼠标，超大序号与图片各朝一边，纵深就出来了
-    el.style.setProperty('--cap-mx', `${clamp((axis.x.cur / 200) * -9, -9, 9).toFixed(2)}px`)
-    el.style.setProperty('--cap-my', `${clamp((axis.y.cur / 200) * -7, -7, 7).toFixed(2)}px`)
-  }
-
-  // 还没停就继续跑；静止后自动收手，不空转
-  const moving =
-    Math.abs(axis.x.cur - axis.x.tgt) > 0.2 ||
-    Math.abs(axis.x.vel) > 0.2 ||
-    Math.abs(axis.y.cur - axis.y.tgt) > 0.2 ||
-    Math.abs(axis.y.vel) > 0.2
-  if (moving) raf = requestAnimationFrame(frame)
-}
-
-function kick() {
-  if (raf || reduce.value) return
-  last = performance.now()
-  raf = requestAnimationFrame(frame)
-}
-
-function onMove(e) {
-  const el = stageRef.value
-  if (!el) return
-  const r = el.getBoundingClientRect()
-  if (!r.width || !r.height) return
-  // 原组件以容器中心为原点，存的是像素偏移（不是归一化值）
-  axis.x.tgt = e.clientX - (r.left + r.width / 2)
-  axis.y.tgt = e.clientY - (r.top + r.height / 2)
-  kick()
-}
 
 function onLeave() {
   paused.value = false
-  axis.x.tgt = 0
-  axis.y.tgt = 0
-  kick()
 }
 
 // ---------------------------- 滚动视差 + 图片入场 ----------------------------
@@ -148,14 +92,16 @@ function onLeave() {
 // 变量写在 .dt 上、由子元素继承，直接 setProperty 不走响应式 —— 和首屏 veil 同一套做法，
 // 否则滚动里每帧都要白跑一遍组件渲染。
 const TEXT_TRAVEL = 16 // 文字列行程(px)，取负方向
-const MEDIA_TRAVEL = 26 // 图片列行程(px)
+// 图片列行程(px)。图片列缩到 75% 后，下面那条约束的余量跟着变小 —— 补偿量正比于图片高度
+// （0.11H ≈ 38px），所以行程也从 26 收到 20，两列相差 36px 仍小于补偿量，仍然恒成立。
+const MEDIA_TRAVEL = 20
 // 入场分两段走：淡入早点完成，放大走满整段进入行程。
 // 放大走满不只是观感 —— 图片以中心为原点缩小，顶边会随之下移，恰好抵消视差把图片上推的
-// 量（起始 0.8 时下移约 0.1H，视差上推最多 42px，图片高 H ≥ 420px 即恒成立），
+// 量（起始 0.78 时下移约 0.11H ≈ 38px，视差上推最多 36px），
 // 于是"图片顶边不越过胶囊顶边"在整段滚动过程中都成立。
 const ENTER_FADE = 0.6
 const ENTER_GROW = 1.0
-const SCALE_FROM = 0.8
+const SCALE_FROM = 0.78 // 入场起始缩放（0.78 → 1）
 
 let sraf = 0
 
@@ -240,7 +186,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearTimeout(timer)
   clearTimeout(fallback)
-  if (raf) cancelAnimationFrame(raf)
   if (sraf) cancelAnimationFrame(sraf)
   if (io) io.disconnect()
   window.removeEventListener('scroll', onScroll)
@@ -259,7 +204,6 @@ onBeforeUnmount(() => {
       <div
         ref="stageRef"
         class="dt"
-        @mousemove="onMove"
         @pointerenter="paused = true"
         @pointerleave="onLeave"
         @focusin="paused = true"
@@ -383,8 +327,6 @@ onBeforeUnmount(() => {
 }
 /* 舞台：原组件是 min-h-screen 居中，这里收成一个区块，留出足够高度放那个大数字 */
 .dt {
-  --num-x: 0px;
-  --num-y: 0px;
   position: relative;
   margin-top: clamp(44px, 6vw, 76px);
   padding: clamp(40px, 5vw, 72px) 0 clamp(96px, 10vw, 132px);
@@ -398,7 +340,8 @@ onBeforeUnmount(() => {
   top: 44%;
   left: -10px;
   z-index: 0;
-  transform: translate3d(var(--num-x), calc(-50% + var(--num-y)), 0);
+  /* 磁性视差已去掉，位置固定（原先这里还要叠加 --num-x / --num-y） */
+  transform: translateY(-50%);
   pointer-events: none;
   user-select: none;
 }
@@ -408,6 +351,12 @@ onBeforeUnmount(() => {
   /* 24vw → 30vw：放大一档，作为底纹的体量够了；上限同步抬到 460px */
   font-size: clamp(180px, 30vw, 460px);
   font-weight: 700;
+  /* 加粗：700 已是微软雅黑 Bold 档，再往上写数字不会更粗，只能靠描边"长胖"。
+     描边色取 currentColor（同样是 6% 白），所以只是笔画变粗、通透感不变；
+     paint-order 把描边垫在填充之下，字形加粗而笔画内部不被糊住。
+     宽度按字号等比给：字号 30vw 的 0.014 倍即 0.42vw，本视口 ≈ 6px。 */
+  -webkit-text-stroke: clamp(2px, 0.42vw, 6px) currentColor;
+  paint-order: stroke fill;
   line-height: 1;
   letter-spacing: -0.06em;
   color: rgba(255, 255, 255, 0.06); /* 原组件 text-foreground/6 */
@@ -420,7 +369,9 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.86fr);
+  /* 图片列 0.86fr → 0.53fr：图片宽约为原来的 75%（实测 515 → 386px），
+     让出的宽度全给文字列（599 → 727px），左侧文字的行随之变长。 */
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.53fr);
   gap: clamp(24px, 3.2vw, 52px);
   /* 顶部对齐，不再垂直居中：图片比文字栏高，居中会让它的顶边蹿到胶囊上方约 80px。
      两列各自偏移同一个 --dt-top，图片顶边因此与胶囊顶边严格齐平。 */
@@ -479,7 +430,7 @@ onBeforeUnmount(() => {
 
 /* ---------------------------- 右列：图片 ---------------------------- */
 /* 两层变换相乘，各管一段，互不覆盖：
-   .dt__media-move  滚动视差（--cap-media-y）+ 入场放大（--cap-media-s / -o）+ 鼠标视差
+   .dt__media-move  滚动视差（--cap-media-y）+ 入场放大（--cap-media-s / -o）
    img              只在换图时缩放一次（见下方 .dt-media-* 过渡） */
 .dt__media {
   position: relative;
@@ -488,12 +439,8 @@ onBeforeUnmount(() => {
 }
 
 .dt__media-move {
-  transform: translate3d(
-      var(--cap-mx, 0px),
-      calc(var(--cap-media-y, 0px) + var(--cap-my, 0px)),
-      0
-    )
-    scale(var(--cap-media-s, 1));
+  /* 鼠标视差已随磁性视差一起去掉（原先还叠 --cap-mx / --cap-my） */
+  transform: translate3d(0, var(--cap-media-y, 0px), 0) scale(var(--cap-media-s, 1));
   opacity: var(--cap-media-o, 1);
   will-change: transform, opacity;
 }
@@ -697,7 +644,10 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: clamp(-30px, -2vw, -10px);
+  /* 原来是 clamp(-30px, -2vw, -10px)：负值把整条推到容器外，被 .dt 的 overflow: hidden
+     从下沿裁掉约 30px，看着就是"显示不全、最下面被遮盖"。
+     改为贴住容器下沿（0），整条完整落在 .dt 里。 */
+  bottom: 0;
   overflow: hidden;
   opacity: 0.08;
   pointer-events: none;
@@ -798,9 +748,6 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dt__num {
-    transform: translateY(-50%);
-  }
   .dt-quote-enter-active .dt__word,
   .dt-author-enter-active .dt__author-line {
     animation: none;
