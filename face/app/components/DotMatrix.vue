@@ -21,29 +21,36 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 // ---------------------------- 可调参数 ----------------------------
 
-const PIX = 6 // 方块边长（CSS 像素）
-const GAP = 2 // 方块间隙（CSS 像素）
+// 以下数值来自对参考站运行时的实测抓取（_ref/trae-uniforms.json），不是估的
+const PIX = 5 // 方块边长：原版 e1PixelSize = 5
+const GAP = 2 // 方块间隙：原版 e1PixelGap = 2
 
 // 流体层两个颜色（只用于"亮度"这个密度信号，不出现在画面上）
+// 原版是 绿(#32F08C, 均值 0.562) → 白(1.0)，跨度 0.44；我们用 深蓝 → 白，跨度 0.78，
+// 判定分辨力更高（原因见文件头说明）。
 const FLUID_C1 = [0.06, 0.15, 0.45] // 深蓝
 const FLUID_C2 = [1.0, 1.0, 1.0] // 白
 
-// 流体参数（与参考站 FluidShader / e1ComputeFluidFlow 中的取值一致）
-const SPEED = 0.15
-const DENSITY = 1.5
-const FREQUENCY = 2.5
+// 流体层 uniform（原版实测：uSpeed=0.18 / uDensity=0.5 / uFrequency=4）
+// 注意：像素化那趟里算流场用的是**另一组硬编码值**(0.15/1.5/2.5)，原版就是分开的。
+const SPEED = 0.18
+const DENSITY = 0.5
+const FREQUENCY = 4
 
 // 像素化参数
-const FLOW_AMP = 35 // 采样点被流场推开的幅度（像素）
-// 亮度阈值：按本实现**实测分布**标定（均值 0.629、标准差 0.0785；
-// 并把抖动带来的有效阈值下移 JITTER/2 补偿进去）。改流体参数后要重新标。
-const THRESHOLD = 0.755
-const JITTER = 0.08 // 每块阈值随机量（原版就是 0.08，必须小）
-const ACCENT_RATIO = 0.32 // 强调色（青）占比，其余为白
+const FLOW_AMP = 35 // 采样点被流场推开的幅度（像素）：原版 ×35.0
+// 亮度阈值：原版 e1Threshold = 0.87（作用在它自己的配色跨度上）。
+// 因为我们的流体参数/配色与它不同，这里按**本实现实测分布**标定：
+// 均值 0.601、标准差 0.0766，取 p85 ≈ 0.702 → 覆盖率约 15%（已含 JITTER/2 的下移）。
+// 改流体参数或配色后必须重新标。
+const THRESHOLD = 0.705
+const JITTER = 0.08 // 每块阈值随机量：原版就是 0.08，必须小
+const ACCENT_RATIO = 0.49 // 强调色占比：原版 e1GreenRatio = 0.49
 
-// 鼠标（原版：按距离平滑 → 会形成一圈圆形渐变；先照搬，之后要删改的就是这里）
-const MOUSE_R = 0.18
-const MOUSE_K = 1.0
+// 鼠标：原版 e1UMouseRadius = 0.3 / e1UMouseStrength = 1.3
+// （它是按距离平滑的 → 会形成一圈圆形渐变；先照搬，之后要删改的就是这里）
+const MOUSE_R = 0.3
+const MOUSE_K = 1.3
 
 // 粒子颜色 = 站点配色
 const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255] // --cyan
