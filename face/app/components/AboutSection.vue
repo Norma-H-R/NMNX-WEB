@@ -137,8 +137,11 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- 卡片堆叠：整段占多屏，每张卡吸顶，按滚动进度逐张缩小 -->
-    <div ref="stackRef" class="stack">
+    <!-- 卡片堆叠：整段占多屏，每张卡吸顶，按滚动进度逐张缩小。
+         放进 .container：卡片宽度与上方正文栏一致（1180 内容宽），
+         否则会既比正文窄、左边又对不齐。 -->
+    <div class="container">
+      <div ref="stackRef" class="stack">
       <div v-for="(c, i) in cards" :key="c.no" class="stack__item">
         <div
           :ref="(el) => (boxes[i] = el)"
@@ -156,8 +159,9 @@ onBeforeUnmount(() => {
               <p class="stack__desc">{{ c.desc }}</p>
             </div>
 
-            <span class="stack__glow" aria-hidden="true" />
-          </article>
+              <span class="stack__glow" aria-hidden="true" />
+            </article>
+          </div>
         </div>
       </div>
     </div>
@@ -198,7 +202,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  width: min(100%, 980px);
+  /* 吃满 .container 的内容宽（与上方正文栏左右对齐），不再自己限宽 */
+  width: 100%;
   height: 74%;
   margin: 0 auto;
   padding: clamp(28px, 3.4vw, 52px);
