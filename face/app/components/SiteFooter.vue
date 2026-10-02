@@ -55,10 +55,12 @@ const SPLIT = 16 // RGB 分裂的最大横向错位（像素）
 const SHAKE = 3 // 爆发时的整幅上下抖动（像素）
 const SPEED = 1.1 // 切片图案的演化速度
 
-// 色差分裂的两路颜色。背景是青色（#6ee7ff），所以用红 + 紫：
-// 红色在青色上最跳，紫色是本站强调色，都比"青底 + 蓝字"这种同色系更出效果。
-const RGB_RED = '#ff3355'
-const RGB_VIOLET = '#8b5cf6'
+// 色差分裂的两路颜色。按要求改成"纯白 + 正红"的强撞色：
+// 底色纯白、主字正红，两路分裂取近黑与亮红 —— 白底上黑/红两种错位都最跳，
+// 而且都落在「白 + 红 + 黑」这一组里，不掺第三种色相。
+// （想要反过来的"红底白字"，把下面 INK / BRAND 两条对调即可，其余不用动。）
+const SPLIT_DARK = '#0b0c14'
+const SPLIT_RED = '#ff2d2d'
 
 // 爆发调度：多久爆发一次、持续多久
 const BURST_MIN = 0.26
@@ -66,8 +68,8 @@ const BURST_MAX = 0.7
 const GAP_MIN = 1.6
 const GAP_MAX = 4.4
 
-const INK = '#06070d' // 字色 = --bg
-const BRAND = '#6ee7ff' // 底色 = --cyan
+const INK = '#e60012' // 字色 = 正红（原为 --bg 墨色）
+const BRAND = '#ffffff' // 底色 = 纯白（原为 --cyan）
 
 // ---------------------------- 状态 ----------------------------
 
@@ -75,8 +77,8 @@ const canvasRef = ref(null)
 
 let ctx = null
 let off = null // 离屏画布：墨色整行字
-let offRed = null // 红色副本（RGB 分裂用）
-let offViolet = null // 紫色副本（RGB 分裂用）
+let offShadow = null // 近黑副本（RGB 分裂用）
+let offFringe = null // 亮红副本（RGB 分裂用）
 let octx = null
 
 let w = 0
@@ -203,8 +205,8 @@ function buildText() {
   octx.textBaseline = 'alphabetic'
   octx.fillText(MARK, w / 2, h / 2 + (asc - desc) / 2)
 
-  offRed = tint(off, RGB_RED)
-  offViolet = tint(off, RGB_VIOLET)
+  offShadow = tint(off, SPLIT_DARK)
+  offFringe = tint(off, SPLIT_RED)
 }
 
 /** 原样铺一次（无位移），用于静止状态 */
@@ -235,10 +237,10 @@ function draw(t) {
   ctx.fillStyle = BRAND
   ctx.fillRect(0, 0, w, h)
 
-  // 色差分裂：红/紫两路左右错开，墨色主字压在中间
+  // 色差分裂：近黑 / 亮红两路左右错开，正红主字压在中间
   ctx.globalAlpha = g * 0.9
-  ctx.drawImage(offRed, 0, 0, sw, sh, -split, shake, w, h)
-  ctx.drawImage(offViolet, 0, 0, sw, sh, split, shake, w, h)
+  ctx.drawImage(offShadow, 0, 0, sw, sh, -split, shake, w, h)
+  ctx.drawImage(offFringe, 0, 0, sw, sh, split, shake, w, h)
   ctx.globalAlpha = 1
 
   ctx.drawImage(off, 0, 0, sw, sh, 0, shake, w, h)
@@ -519,7 +521,9 @@ onBeforeUnmount(() => {
 .ftr__mark {
   position: relative;
   overflow: hidden;
-  background: var(--cyan);
+  /* 与画布填充色（BRAND = 纯白）保持一致：画布出首帧之前露出的就是这层底色，
+     不同步会闪一下旧颜色。 */
+  background: #ffffff;
   height: calc(min(100vw, 1600px) / 4 + 100px);
 }
 
