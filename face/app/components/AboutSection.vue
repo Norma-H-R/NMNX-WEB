@@ -1,132 +1,301 @@
 <script setup>
-// 三条轨道各自转速不同，做出一层层套叠的天体感
-const orbits = [
-  { r: 66, dur: 13, dot: 3.4, reverse: false },
-  { r: 118, dur: 21, dot: 2.8, reverse: true },
-  { r: 170, dur: 33, dot: 2.2, reverse: false },
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+
+/**
+ * 理念区块 —— 按 Inspira UI「Card Stack」的真实源码移植。
+ *
+ * 原组件（registry.inspira-ui.com/card-stack.json）由 4 个文件组成，依赖 motion-v：
+ *   CardStack.vue      useScroll({ offset: ['start start','end end'], target })
+ *                      → 提供 scrollYProgress（0~1）
+ *   CardStackItem.vue  外层 sticky top-0 h-full；内层 top: 5 + i*3 %、
+ *                      scale: useTransform(progress, [i/N, 1], [1, 1-(N-i)*m])
+ *   CardStackContext   透传 { progress, scaleMultiplier, totalCards }
+ *
+ * 机制就一句话：**每张卡吸顶 + 按滚动进度逐张缩小**，于是前面的卡在顶部露出一条边，
+ * 后面的卡一张张盖上来。本项目零依赖，把 motion 的两个原语等价替换即可：
+ *   useScroll  → 自己算 progress = (scrollY - stackTop) / (stackHeight - viewportH)
+ *   useTransform → 每个卡自己算 scale（原式的输入/输出区间原样保留）
+ *
+ * 原 demo 是在一个固定高度的 overflow-auto 容器里滚；这里改成跟随页面滚动，
+ * 对整站更自然。scaleMultiplier 默认 0.03 与原组件一致。
+ */
+
+const SCALE_MULTIPLIER = 0.03 // 原组件默认值
+
+const cards = [
+  {
+    no: '01',
+    title: '两端协作',
+    desc: '主控负责决策与下单，跟随端通过命名管道直驱，把指令送到每一台终端。',
+    tag: '主控 + 跟随端',
+  },
+  {
+    no: '02',
+    title: '毫秒级直驱',
+    desc: '命名管道直连终端，跳过轮询与文件落地，指令以毫秒级送达。',
+    tag: '命名管道',
+  },
+  {
+    no: '03',
+    title: '链路在本地',
+    desc: '全程本地完成，不依赖第三方中转。数据与指令不离开自己的机器。',
+    tag: '本地链路',
+  },
+  {
+    no: '04',
+    title: '离线授权',
+    desc: '离线激活码绑定账号、经纪商与有效期；一次编译即可分发给不同客户。',
+    tag: '离线激活码',
+  },
 ]
+
+const total = cards.length
+const stackRef = ref(null)
+const boxes = ref([]) // 每张卡的内层（承接 scale）
+
+// 预先算好的几何：避免每帧 getBoundingClientRect 触发同步布局
+let stackTop = 0
+let stackRange = 1
+let raf = 0
+let io = null
+let live = false
+
+function measure() {
+  const el = stackRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  stackTop = r.top + window.scrollY
+  stackRange = Math.max(1, r.height - window.innerHeight)
+}
+
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+// 原式：scale = useTransform(progress, [i/N, 1], [1, scaleTo])
+//       scaleTo = 1 - (N - i) * scaleMultiplier
+function apply() {
+  raf = 0
+  if (!live) return
+  const p = clamp01((window.scrollY - stackTop) / stackRange)
+  for (let i = 0; i < total; i++) {
+    const el = boxes.value[i]
+    if (!el) continue
+    const from = i / total
+    const t = clamp01((p - from) / (1 - from || 1))
+    const scaleTo = 1 - (total - i) * SCALE_MULTIPLIER
+    const scale = 1 + (scaleTo - 1) * t
+    el.style.transform = `scale(${scale.toFixed(4)})`
+  }
+}
+
+function onScroll() {
+  if (raf || !live) return
+  raf = requestAnimationFrame(apply)
+}
+
+function onResize() {
+  measure()
+  onScroll()
+}
+
+onMounted(() => {
+  measure()
+  // 用 IntersectionObserver 管住活跃区间：不在附近就完全不参与滚动计算
+  if (typeof IntersectionObserver !== 'undefined' && stackRef.value) {
+    io = new IntersectionObserver(
+      (entries) => {
+        live = entries[entries.length - 1].isIntersecting
+        if (live) onScroll()
+      },
+      { rootMargin: '40% 0px' },
+    )
+    io.observe(stackRef.value)
+  } else {
+    live = true
+  }
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('resize', onResize, { passive: true })
+  apply()
+})
+
+onBeforeUnmount(() => {
+  if (raf) cancelAnimationFrame(raf)
+  if (io) io.disconnect()
+  window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('resize', onResize)
+})
 </script>
 
 <template>
   <section id="about" class="section about">
-    <div class="container about__grid">
-      <div class="about__text" v-reveal="{ selector: '.rv', stagger: 0.1 }">
+    <div class="container">
+      <div class="about__head" v-reveal="{ selector: '.rv', stagger: 0.1 }">
         <p class="eyebrow rv">理念</p>
         <h2 class="title rv">
           把交易执行<br />
           做到<em>安静而准确</em>
         </h2>
-        <p class="lead rv">
-          南门拈星是一套主控 + 跟随端的量化交易系统。主控负责决策与下单，
-          跟随端通过命名管道直驱，把指令送到每一台终端。
-        </p>
-        <p class="lead rv">
-          链路全程在本地完成，不依赖第三方中转。授权采用离线激活码，
-          绑定账号、经纪商与有效期，一次编译即可分发给不同客户。
-        </p>
       </div>
+    </div>
 
-      <div class="about__visual rv" v-reveal="{ y: 0, duration: 1.4 }">
-        <svg class="orbit" viewBox="0 0 420 420" aria-hidden="true">
-          <defs>
-            <radialGradient id="core" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stop-color="#6ee7ff" stop-opacity=".95" />
-              <stop offset="55%" stop-color="#a78bfa" stop-opacity=".35" />
-              <stop offset="100%" stop-color="#a78bfa" stop-opacity="0" />
-            </radialGradient>
-          </defs>
+    <!-- 卡片堆叠：整段占多屏，每张卡吸顶，按滚动进度逐张缩小 -->
+    <div ref="stackRef" class="stack">
+      <div v-for="(c, i) in cards" :key="c.no" class="stack__item">
+        <div
+          :ref="(el) => (boxes[i] = el)"
+          class="stack__box"
+          :style="{ top: `${5 + i * 3}%` }"
+        >
+          <article class="stack__card" :class="`stack__card--${i + 1}`">
+            <header class="stack__top">
+              <span class="stack__no">{{ c.no }}</span>
+              <span class="stack__tag">{{ c.tag }}</span>
+            </header>
 
-          <circle cx="210" cy="210" r="52" fill="url(#core)" />
+            <div class="stack__body">
+              <h3 class="stack__title">{{ c.title }}</h3>
+              <p class="stack__desc">{{ c.desc }}</p>
+            </div>
 
-          <g v-for="(o, i) in orbits" :key="i" class="orbit__g">
-            <circle class="orbit__ring" cx="210" cy="210" :r="o.r" />
-            <g
-              class="orbit__spin"
-              :style="{ animationDuration: o.dur + 's', animationDirection: o.reverse ? 'reverse' : 'normal' }"
-            >
-              <circle class="orbit__dot" cx="210" :cy="210 - o.r" :r="o.dot" />
-            </g>
-          </g>
-
-          <circle class="orbit__hub" cx="210" cy="210" r="3.4" />
-        </svg>
+            <span class="stack__glow" aria-hidden="true" />
+          </article>
+        </div>
       </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.about__grid {
-  display: grid;
-  /* 始终两列：左文右图，任何宽度都不塌成上下堆叠。
-     minmax(0, …) 是必须的，否则长文本会把列撑破 */
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
-  gap: clamp(22px, 6vw, 110px);
-  align-items: center;
+.about__head {
+  max-width: 720px;
 }
 
-.about__visual {
+/* ---------------------------- 卡片堆叠 ---------------------------- */
+/* 整段高度 = 卡片数 × 每张一屏；滚动空间就是它的高度减去视口 */
+.stack {
+  position: relative;
+  margin-top: clamp(36px, 5vw, 64px);
+  padding-bottom: 42vh;
+}
+
+/* 每张卡一屏高、吸顶；DOM 顺序靠后的盖在上面 */
+.stack__item {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+/* 内层承接缩放入场。top 由内联样式给（原组件是 5 + i*3 %），
+   让被埋住的卡在顶部露出一条边 */
+.stack__box {
+  position: relative;
+  height: 100%;
+  transform-origin: top center;
+  will-change: transform;
+}
+
+.stack__card {
+  position: relative;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  justify-content: space-between;
+  width: min(100%, 980px);
+  height: 74%;
+  margin: 0 auto;
+  padding: clamp(28px, 3.4vw, 52px);
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: linear-gradient(160deg, rgba(20, 24, 38, 0.96), rgba(9, 11, 20, 0.98));
+  overflow: hidden;
 }
 
-.orbit {
-  width: min(100%, 440px);
-  height: auto;
-  filter: drop-shadow(0 0 60px rgba(110, 231, 255, 0.07));
+/* 每张卡换一缕强调色，呼应原来的轨道配色 */
+.stack__card--1 .stack__glow {
+  background: radial-gradient(58% 62% at 86% 8%, rgba(110, 231, 255, 0.14), transparent 70%);
+}
+.stack__card--2 .stack__glow {
+  background: radial-gradient(58% 62% at 86% 8%, rgba(167, 139, 250, 0.14), transparent 70%);
+}
+.stack__card--3 .stack__glow {
+  background: radial-gradient(58% 62% at 86% 8%, rgba(242, 209, 141, 0.12), transparent 70%);
+}
+.stack__card--4 .stack__glow {
+  background: radial-gradient(58% 62% at 86% 8%, rgba(110, 231, 255, 0.12), transparent 70%);
 }
 
-.orbit__ring {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.1);
-  stroke-width: 1;
+.stack__glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
-.orbit__g:nth-child(3) .orbit__ring {
-  stroke-dasharray: 3 9;
-}
-.orbit__g:nth-child(4) .orbit__ring {
-  stroke-dasharray: 2 12;
-}
-
-.orbit__spin {
-  /* transform-box 让旋转轴落在 SVG 视口坐标系，而不是元素自身的包围盒 */
-  transform-box: view-box;
-  transform-origin: 210px 210px;
-  animation: orbit-spin linear infinite;
+.stack__top {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.orbit__dot {
-  fill: var(--cyan);
+.stack__no {
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  color: var(--muted);
 }
 
-.orbit__g:nth-child(3) .orbit__dot {
-  fill: var(--violet);
-}
-.orbit__g:nth-child(4) .orbit__dot {
-  fill: var(--gold);
-}
-
-.orbit__hub {
-  fill: #fff;
+.stack__tag {
+  padding: 5px 13px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
 }
 
-@keyframes orbit-spin {
-  to {
-    transform: rotate(360deg);
-  }
+.stack__body {
+  position: relative;
+  padding-bottom: clamp(4px, 1vw, 12px);
 }
 
+.stack__title {
+  font-size: clamp(30px, 4.4vw, 62px);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  color: #fff;
+}
+
+.stack__desc {
+  margin-top: clamp(14px, 1.8vw, 24px);
+  max-width: 46ch;
+  font-size: clamp(15px, 1.25vw, 19px);
+  line-height: 1.9;
+  color: var(--text-dim);
+}
+
+/* ---------------------------- 降级 ---------------------------- */
+/* 关了动效就别做堆叠了：改成普通竖排卡片，内容照样读得完 */
 @media (prefers-reduced-motion: reduce) {
-  .orbit__spin {
-    animation: none;
+  .stack {
+    padding-bottom: 0;
+  }
+  .stack__item {
+    position: static;
+    height: auto;
+  }
+  .stack__box {
+    top: 0 !important;
+    transform: none !important;
+  }
+  .stack__card {
+    height: auto;
+    margin-bottom: 20px;
   }
 }
 
-/* 窄屏只压缩间距和字号，不改列数 */
 @media (max-width: 640px) {
-  .about__grid {
-    gap: 18px;
+  .stack__card {
+    height: 78%;
+    border-radius: 16px;
   }
 }
 </style>
