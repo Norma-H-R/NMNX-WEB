@@ -67,9 +67,26 @@ const index = computed(() => String(active.value + 1).padStart(2, '0'))
 const progress = computed(() => `${((active.value + 1) / items.length) * 100}%`)
 const ticker = computed(() => items.map((t) => t.author).join(' • ') + ' • ')
 
-// 原组件是 quote.split(' ') —— 中文没有空格，改成按标点断句。
-// 断出来的每段仍带标点，正好是"逐词"的粒度：一次翻一个短句，不是翻一个字。
-const words = computed(() => cur.value.quote.split(/(?<=[，。、；：])/).filter(Boolean))
+// 引用按"逐词"切分。原组件是 quote.split(' ') —— 中文没有空格，得自己切。
+//
+// 早先只按标点断句，每段都是一个 inline-block。问题在于 **inline-block 内部不能换行**：
+// 一整句要么留在行尾、要么被整体挤到下一行，排出来就是"有的行挤了好几段、有的行只孤零零
+// 一段"。现在切两层：先按标点断句，再把超过 CHUNK 字的句子切成 CHUNK 字一块 ——
+// 换行机会足够密，浏览器才能把每行都填得差不多满。
+const CHUNK = 4
+const words = computed(() =>
+  cur.value.quote
+    .split(/(?<=[，。、；：])/)
+    .filter(Boolean)
+    .flatMap((s) => (s.length <= CHUNK ? [s] : s.match(new RegExp(`.{1,${CHUNK}}`, 'g')) || [s])),
+)
+
+// 逐词入场的步长：总跨度固定约 0.3s，按条目数摊薄（CSS 里用 --step）。
+// 条目多少都不会改变整句翻完的总时长；条目少时仍等同于原版的 0.05s/项。
+const qStep = computed(() => {
+  const n = words.value.length
+  return n > 1 ? Math.min(0.05, 0.3 / (n - 1)) : 0
+})
 
 // 舞台元素：既是滚动视差的变量宿主（applyScroll 往它上面写 --cap-*），
 // 也是自动轮播的可见性观察目标（IntersectionObserver 观察它）。
@@ -239,7 +256,7 @@ onBeforeUnmount(() => {
             </Transition>
 
             <Transition name="dt-quote" mode="out-in">
-              <blockquote :key="active" class="dt__quote">
+              <blockquote :key="active" class="dt__quote" :style="{ '--step': `${qStep}s` }">
                 <span
                   v-for="(w, i) in words"
                   :key="`${active}-${i}`"
@@ -260,30 +277,6 @@ onBeforeUnmount(() => {
                 </div>
               </Transition>
 
-              <div class="dt__nav">
-                <button type="button" class="dt__arrow" aria-label="上一项" @click="go(-1)">
-                  <svg viewBox="0 0 16 16" width="18" height="18" fill="none">
-                    <path
-                      d="M10 12L6 8L10 4"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </button>
-                <button type="button" class="dt__arrow" aria-label="下一项" @click="go(1)">
-                  <svg viewBox="0 0 16 16" width="18" height="18" fill="none">
-                    <path
-                      d="M6 4L10 8L6 12"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </button>
-              </div>
             </div>
           </div>
 
@@ -303,6 +296,32 @@ onBeforeUnmount(() => {
                   decoding="async"
                 />
               </Transition>
+            </div>
+
+            <!-- 左右切换：按要求移到图片下方、靠右对齐（即右下角） -->
+            <div class="dt__nav">
+              <button type="button" class="dt__arrow" aria-label="上一项" @click="go(-1)">
+                <svg viewBox="0 0 16 16" width="18" height="18" fill="none">
+                  <path
+                    d="M10 12L6 8L10 4"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <button type="button" class="dt__arrow" aria-label="下一项" @click="go(1)">
+                <svg viewBox="0 0 16 16" width="18" height="18" fill="none">
+                  <path
+                    d="M6 4L10 8L6 12"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
             </div>
           </div>
         </div>
@@ -352,14 +371,17 @@ onBeforeUnmount(() => {
   font-size: clamp(180px, 30vw, 460px);
   font-weight: 700;
   /* 加粗：700 已是微软雅黑 Bold 档，再往上写数字不会更粗，只能靠描边"长胖"。
-     描边色取 currentColor（同样是 6% 白），所以只是笔画变粗、通透感不变；
-     paint-order 把描边垫在填充之下，字形加粗而笔画内部不被糊住。
-     宽度按字号等比给：字号 30vw 的 0.014 倍即 0.42vw，本视口 ≈ 6px。 */
-  -webkit-text-stroke: clamp(2px, 0.42vw, 6px) currentColor;
+     宽度按字号等比给：字号 30vw 的 0.014 倍即 0.42vw，本视口 ≈ 6px。
+     ⚠️ 描边色与填充色必须是同一个**不透明**颜色：先前两边都写 rgba(255,255,255,0.06)，
+     描边与填充重叠处的 alpha 会叠到约 0.12，笔画内部比外圈亮 —— 看上去就是"多了个边框，
+     里面还有条白线"。改成不透明等色后重叠处完全同色，只剩加粗。 */
+  -webkit-text-stroke: clamp(2px, 0.42vw, 6px) #15161c;
   paint-order: stroke fill;
   line-height: 1;
   letter-spacing: -0.06em;
-  color: rgba(255, 255, 255, 0.06); /* 原组件 text-foreground/6 */
+  /* #15161c = 原 rgba(255,255,255,0.06) 叠在页面底色 #06070d 上的实际颜色，
+     观感与原来一致，但不再参与透明叠加 */
+  color: #15161c;
 }
 
 /* ---------------------------- 三列：细轨 / 文字 / 图片 ---------------------------- */
@@ -423,17 +445,26 @@ onBeforeUnmount(() => {
   /* 左右留白交给 .dt__row 的列间距；上边距与图片共用 --dt-top，两者顶边才齐。
      数值由原来的 clamp(8px,1.4vw,20px) 收到 clamp(6px,1vw,14px) —— 胶囊随之略微上提。 */
   padding: var(--dt-top) 0;
+  /* 竖排 + align-self: stretch：撑满整行高度，配合 .dt__foot 的 margin-top: auto
+     把作者行钉在列底 —— 引用文案长一点短一点，下面那条横线都不会跟着上下跑。
+     行高由右列（图片 + 切换按钮）决定，是恒定的。 */
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
   /* 滚动视差：与图片列反向位移（脚本写 --cap-text-y） */
   transform: translate3d(0, var(--cap-text-y, 0px), 0);
   will-change: transform;
 }
 
-/* ---------------------------- 右列：图片 ---------------------------- */
+/* ---------------------------- 右列：图片 + 切换按钮 ---------------------------- */
 /* 两层变换相乘，各管一段，互不覆盖：
    .dt__media-move  滚动视差（--cap-media-y）+ 入场放大（--cap-media-s / -o）
    img              只在换图时缩放一次（见下方 .dt-media-* 过渡） */
 .dt__media {
   position: relative;
+  /* 竖排：图片在上、切换按钮在下（按钮靠右由 .dt__nav 的 margin-left: auto 给） */
+  display: flex;
+  flex-direction: column;
   /* 与 .dt__main 的上边距取同一个值 → 图片顶边 = 公司胶囊顶边 */
   margin-top: var(--dt-top);
 }
@@ -458,12 +489,14 @@ onBeforeUnmount(() => {
 }
 
 /* 换图：旧图淡出并微微放大，新图"由透明缩小逐渐放大"。
-   （入场阶段的那次放大在 .dt__media-move 上，由滚动进度驱动） */
+   （入场阶段的那次放大在 .dt__media-move 上，由滚动进度驱动）
+   节奏与超大序号对齐：.dt-num-* 是 leave 0.2s + enter 0.34s，
+   原先这里是 0.35 + 0.8（合计 1.15s），图片因此比序号慢一拍。 */
 .dt-media-enter-active {
-  transition: opacity 0.55s var(--ease), transform 0.8s var(--ease);
+  transition: opacity 0.34s var(--ease), transform 0.34s var(--ease);
 }
 .dt-media-leave-active {
-  transition: opacity 0.35s var(--ease), transform 0.5s var(--ease);
+  transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
 }
 .dt-media-enter-from {
   opacity: 0;
@@ -507,6 +540,11 @@ onBeforeUnmount(() => {
 .dt__quote {
   margin: 0 0 clamp(34px, 4vw, 54px);
   min-height: clamp(120px, 14vw, 176px);
+  /* 让浏览器把各行长度摊匀（同一行数下做最小方差）。切块变密之后它才有可调整的余量：
+     三句在默认断行下是 95/76/64、95/89/44、95/95/44，加 balance 后变成
+     70/76/89、70/89/70、70/76/89 —— 最短那行从 44% 提到 70%，孤行消失。
+     不支持的浏览器直接忽略，退回默认断行。 */
+  text-wrap: balance;
   font-size: clamp(26px, 3.4vw, 46px);
   font-weight: 300;
   line-height: 1.2;
@@ -520,10 +558,12 @@ onBeforeUnmount(() => {
   display: inline-block;
 }
 
-/* 逐词入场：原组件 delay i*0.05、y 20、rotateX 90 */
+/* 逐词入场：原组件 delay i*0.05、y 20、rotateX 90
+   步长改由脚本按条目数算好（--step，总跨度固定约 0.3s）：
+   切细之后条目变多，若仍按每项 0.05s 递增，整句翻完要等半秒多，比序号慢太多。 */
 .dt-quote-enter-active .dt__word {
   animation: dt-word 0.5s var(--ease) both;
-  animation-delay: calc(var(--i, 0) * 0.05s);
+  animation-delay: calc(var(--i, 0) * var(--step, 0.05s));
 }
 
 @keyframes dt-word {
@@ -537,12 +577,14 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ---------------------------- 作者行 + 导航 ---------------------------- */
+/* ---------------------------- 作者行 ---------------------------- */
 .dt__foot {
   display: flex;
   align-items: flex-end;
-  justify-content: space-between;
   gap: 24px;
+  /* 顶开到底部：把作者行钉在列底，位置不随引用文案长短变化。
+     与引用的最小间距由 .dt__quote 自己的 margin-bottom 保证。 */
+  margin-top: auto;
 }
 
 .dt__author {
@@ -592,6 +634,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 16px;
+  /* 在 .dt__media 这个竖排容器里，margin-left: auto 让它在交叉轴上靠右 —— 即右下角 */
+  margin-left: auto;
+  margin-top: clamp(18px, 2.2vw, 30px);
 }
 
 .dt__arrow {
