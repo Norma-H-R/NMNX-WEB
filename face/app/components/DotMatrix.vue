@@ -52,9 +52,13 @@ const ACCENT_RATIO = 0.49 // 强调色占比：原版 e1GreenRatio = 0.49
 const MOUSE_R = 0.3
 const MOUSE_K = 1.3
 
-// 粒子颜色 = 站点配色
-const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255] // --cyan
-const COL_WHITE = [1.0, 1.0, 1.0]
+// 粒子颜色 = 站点配色。
+// DOT_DIM 是整体压暗系数（1 = 原亮度，0.55 = 压暗 45%）。
+// ⚠️ 它只压"画面上的粒子颜色"：判定用的亮度来自流体贴图（FLUID_C1/C2），
+// 两者独立，所以调这个不会改变点阵的疏密，放心调。
+const DOT_DIM = 0.55
+const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255].map((v) => v * DOT_DIM) // --cyan
+const COL_WHITE = [1.0, 1.0, 1.0].map((v) => v * DOT_DIM)
 const COL_BG = [6 / 255, 7 / 255, 13 / 255] // --bg
 
 const DPR_MAX = 1.5 // 输出本就是 6px 方块，高 DPR 无收益
