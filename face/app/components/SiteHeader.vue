@@ -1,5 +1,8 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useAccount } from '~/composables/useAccount'
+import { goWithVeil } from '~/composables/usePageLink'
+import { useNotices } from '~/composables/useNotices'
 
 const solid = ref(false)
 const headerRef = ref(null)
@@ -9,11 +12,103 @@ const headerRef = ref(null)
 const route = useRoute()
 const anchor = (h) => (route.path === '/' ? h : `/${h}`)
 
-const nav = [
+/*
+ * 两套导航，按所在页面切。
+ *
+ * 首页：滚到页面里的区块，用锚点；
+ * 子页（用户中心、通知页…）：#about 这些锚点在子页上根本不存在，留着点了不动，
+ *   所以换成站内页面之间的导航 —— 博客 / 论坛 / 产品介绍 / 文章。
+ */
+const NAV_HOME = [
   { label: '理念', href: '#about' },
   { label: '能力', href: '#capability' },
   { label: '联系', href: '#contact' },
 ]
+
+const NAV_PAGE = [
+  { label: '博客', href: '/blog' },
+  { label: '论坛', href: '/forum' },
+  { label: '产品介绍', href: '/products' },
+  { label: '文章', href: '/articles' },
+]
+
+const onHome = computed(() => route.path === '/')
+const nav = computed(() => (onHome.value ? NAV_HOME : NAV_PAGE))
+
+/** 子页那套是站内链接，走闸门过渡；首页的锚点交给浏览器原生滚动 */
+function onNav(e, item) {
+  if (item.href.startsWith('#')) return
+
+  goWithVeil(e, item.href)
+}
+
+// ---------------------------------------------------------------------------
+// 进用户中心走闸门过渡（"大刷屏"）：点一下先让两扇门合拢 + 中缝亮光刃，
+// 等屏被完全遮住才真正换页 —— 跳转那一帧的闪动就被盖住了，揭开时已经是新页面。
+//
+// 只接管普通左键：中键 / Ctrl / Shift / Alt + 点击仍交给浏览器（新标签打开），
+// href 也照常留着，禁用 JS 时链接依然能用。
+// ---------------------------------------------------------------------------
+function goAccount(e) {
+  // 已经在用户中心就别再进一次 —— 那等于白跑一趟闸门、把页面整个重新挂载
+  if (route.path === '/account') {
+    e.preventDefault()
+
+    return
+  }
+
+  goTo(e, '/account')
+}
+
+/** 积分商城：已经在用户中心就地滚过去，同样不重新进一次 */
+function goPoints(e) {
+  if (route.path === '/account') {
+    e.preventDefault()
+    document.getElementById('points')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
+    return
+  }
+
+  goTo(e, '/account#points')
+}
+
+/** 站内跳转统一走 usePageLink 的 goWithVeil（闸门过渡 + 只接管普通左键） */
+const goTo = goWithVeil
+
+// ---------------------------------------------------------------------------
+// 账户入口：未登录是「登录/注册」四个字，已登录换成头像。
+// 鼠标经过头像时头像上移、下方滑出一张卡片（时间 / 授权倒计时 / 积分）。
+//
+// 展开纯走 CSS :hover（见 .me:hover），没走 JS：省掉一个 hover 状态机，
+// 也不会在鼠标快速划过时留下没收回去的浮层。键盘用户由 :focus-within 兜底。
+// ---------------------------------------------------------------------------
+const { logged, sessionReady, user, countdown, now, avatarUrl, startClock, restoreSession, logout } = useAccount()
+
+// 未读系统公告：红点 + 数字挂在头像右下角。
+// 只有系统公告走这里 —— 博客 / 论坛的回复刻意不在页头提示，要进个人中心才看得到。
+const { unreadAnnouncements, unreadReplies, loadRead } = useNotices()
+
+// 已读状态在 localStorage，服务端读不到；等客户端读完再决定要不要出红点，
+// 否则服务端渲染成"有红点"、客户端变成"没有"，直接撞 hydration
+const noticeReady = ref(false)
+
+onMounted(() => {
+  loadRead()
+  noticeReady.value = true
+})
+
+const noticeCount = computed(() => (noticeReady.value ? unreadAnnouncements.value.length : 0))
+
+const pad = (n) => (n < 10 ? `0${n}` : String(n))
+
+const clockText = computed(() => {
+  const d = new Date(now.value)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+})
+
+// 手写千分位而不是 toLocaleString：后者的分隔符取决于运行环境的 locale，
+// SSR 与浏览器不一致就会 hydration 报错
+const pointsText = computed(() => String(user.points).replace(/\B(?=(\d{3})+(?!\d))/g, ','))
 
 // ---------------------------------------------------------------------------
 // 底衬浓度用 CSS 变量 --hdr-p 逐帧写，不走响应式（滚动里每帧都在变）。
@@ -123,6 +218,11 @@ function onResize() {
 onMounted(() => {
   apply()
   syncLens()
+  // 悬浮卡上的时间和倒计时每秒都在走：交给共享时钟（幂等，多处调用只起一个 interval）
+  startClock()
+  // 页头每页都在，顺手在这里恢复本地会话（幂等）——
+  // 刷新后头像能立刻回来，不用先点进用户中心
+  void restoreSession()
   window.addEventListener('scroll', onScroll, { passive: true })
   window.addEventListener('resize', onResize, { passive: true })
 })
@@ -173,12 +273,119 @@ onBeforeUnmount(() => {
       </a>
 
       <nav class="nav">
-        <a v-for="item in nav" :key="item.href" :href="anchor(item.href)">{{ item.label }}</a>
+        <a
+          v-for="item in nav"
+          :key="item.href"
+          :href="item.href.startsWith('#') ? anchor(item.href) : item.href"
+          @click="onNav($event, item)"
+        >
+          {{ item.label }}
+        </a>
       </nav>
 
-      <!-- 登录/注册入口：纯文字，无按钮样式。href 暂时是占位锚点：项目里还没有登录页，
-           等有实际地址（站内页或外部系统）时把它换掉即可。 -->
-      <a class="hdr__login" href="#login">登录/注册</a>
+      <!-- 账户入口。两者都指向站内的用户中心页（pages/account.vue）：
+           未登录时那一页是登录/注册表单，登录后是账户面板。
+           点击不直接跳，交给 goAccount 走闸门过渡（见脚本）。 -->
+      <!--
+        会话未确定（= 服务端渲染到注水完成这一瞬间）：留一个占位。
+        不显示"登录/注册"也不显示头像 —— 否则已登录的人刷新时会先闪一下登录入口。
+        占位做成与头像同尺寸的不可见方块，页头不会抖。
+      -->
+      <span v-if="!sessionReady" class="hdr__pending" aria-hidden="true" />
+
+      <a v-else-if="!logged" class="hdr__login" href="/account" @click="goAccount">登录/注册</a>
+
+      <div v-else class="me">
+        <a class="me__btn" href="/account" @click="goAccount" aria-label="进入用户中心">
+          <img class="me__img" :src="avatarUrl" alt="" width="34" height="34" />
+          <!-- 未读系统公告：红点 + 数字（博客 / 论坛的回复不在这里提示） -->
+          <span v-if="noticeCount" class="me__badge">
+            {{ noticeCount > 9 ? '9+' : noticeCount }}
+          </span>
+        </a>
+
+        <!--
+          悬浮卡：头像上移、卡片从上方滑下来（展开全靠 CSS :hover，见样式）。
+          .me__pop 自己带 padding-top 当作与头像之间的"桥" —— 鼠标从头像挪到卡上
+          时不会经过一段不属于卡片的空隙，卡片就不会中途收回去。
+        -->
+        <div class="me__pop">
+          <div class="me__card">
+            <div class="me__top">
+              <img class="me__avatar" :src="avatarUrl" alt="" width="40" height="40" />
+              <div class="me__who">
+                <p class="me__name">{{ user.name }}</p>
+                <p class="me__mail">{{ user.email }}</p>
+              </div>
+              <span class="me__tier">{{ user.tier }}</span>
+            </div>
+
+            <ul class="me__stats">
+              <li>
+                <span class="me__k">当前时间</span>
+                <!-- 秒级数字在 SSR 与客户端必然对不齐，包一层 ClientOnly 免得 hydration 报错 -->
+                <ClientOnly>
+                  <span class="me__v me__v--mono">{{ clockText }}</span>
+                  <template #fallback>
+                    <span class="me__v me__v--mono">--:--:--</span>
+                  </template>
+                </ClientOnly>
+              </li>
+              <li>
+                <span class="me__k">最近到期</span>
+                <ClientOnly>
+                  <span class="me__v me__v--mono">{{ countdown.days }} 天</span>
+                  <template #fallback>
+                    <span class="me__v me__v--mono">-- 天</span>
+                  </template>
+                </ClientOnly>
+              </li>
+              <li>
+                <span class="me__k">积分</span>
+                <span class="me__v me__v--gold">{{ pointsText }}</span>
+              </li>
+            </ul>
+
+            <!--
+            未读：按「公告 / 通知」分两类。
+            公告 = 系统公告，通知 = 博客 / 论坛的回复 —— 这里只报数，点进去才是完整列表。
+            数字读的是 localStorage 的已读记录，服务端读不到，所以先给「—」占位，
+            等客户端读完再填，免得撞 hydration。
+          -->
+          <div class="me__unread">
+            <a
+              class="me__un"
+              href="/notices?type=announcement"
+              @click="goTo($event, '/notices?type=announcement')"
+            >
+              <span class="me__un-k">公告</span>
+              <span class="me__un-v">
+                <b>{{ noticeReady ? unreadAnnouncements.length : '—' }}</b> 条未读
+              </span>
+              <span class="me__un-go" aria-hidden="true">›</span>
+            </a>
+
+            <a
+              class="me__un"
+              href="/notices?type=reply"
+              @click="goTo($event, '/notices?type=reply')"
+            >
+              <span class="me__un-k">通知</span>
+              <span class="me__un-v">
+                <b>{{ noticeReady ? unreadReplies.length : '—' }}</b> 条未读
+              </span>
+              <span class="me__un-go" aria-hidden="true">›</span>
+            </a>
+          </div>
+
+          <div class="me__acts">
+              <a class="me__act" href="/account" @click="goAccount">用户中心</a>
+              <a class="me__act" href="/account#points" @click="goPoints">积分商城</a>
+              <button type="button" class="me__act me__act--out" @click="logout">退出登录</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </header>
 </template>
@@ -305,6 +512,14 @@ onBeforeUnmount(() => {
   transform-origin: left;
 }
 
+/* 会话未确定时的占位：与头像同尺寸、完全不可见。
+   作用只是"先占住位置"，免得页头在恢复会话的那一瞬间抖一下。 */
+.hdr__pending {
+  display: block;
+  width: 34px;
+  height: 34px;
+}
+
 /* 登录/注册：纯文字入口，排版与 .nav a 同一套（无边框、无底色、无胶囊）。
    别再给它加回 .btn —— 那个按钮固定 42px 高，而条收薄到 45.6px 时上下只剩 3.6px 余量。 */
 .hdr__login {
@@ -318,12 +533,300 @@ onBeforeUnmount(() => {
   color: var(--text);
 }
 
+/* ---------------------------- 已登录：头像 + 悬浮卡 ---------------------------- */
+.me {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.me__btn {
+  position: relative;
+  display: block;
+  border-radius: 50%;
+  transition: transform 0.45s var(--ease);
+}
+
+/* 未读公告角标：挑最刺眼的红，外圈留一道与页头同色的边框当"挖空" */
+.me__badge {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  display: grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border: 2px solid var(--bg);
+  border-radius: 99px;
+  background: #ff5c5c;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.me__img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  transition: border-color 0.4s var(--ease), box-shadow 0.4s var(--ease);
+}
+
+/* 头像上移半格 + 起一圈青辉：先给个"下面要弹出东西"的暗示，再让卡片滑下来 */
+.me:hover .me__btn,
+.me:focus-within .me__btn {
+  transform: translateY(-3px);
+}
+
+.me:hover .me__img,
+.me:focus-within .me__img {
+  border-color: rgba(110, 231, 255, 0.55);
+  box-shadow:
+    0 0 0 4px rgba(110, 231, 255, 0.1),
+    0 10px 24px -12px rgba(110, 231, 255, 0.9);
+}
+
+.me__pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  /* 这一段 padding 是"桥"：鼠标从头像挪到卡上时仍算在卡片范围内 */
+  padding-top: 12px;
+  width: 272px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-10px);
+  transition:
+    opacity 0.28s var(--ease),
+    transform 0.45s var(--ease),
+    visibility 0s linear 0.45s;
+}
+
+.me:hover .me__pop,
+.me:focus-within .me__pop {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0.06s;
+}
+
+.me__card {
+  position: relative;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(16, 20, 34, 0.96), rgba(8, 10, 18, 0.98));
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  box-shadow:
+    0 30px 70px -30px rgba(0, 0, 0, 0.95),
+    0 0 0 1px rgba(110, 231, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.me__top {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.me__avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.me__who {
+  min-width: 0;
+  flex: 1;
+}
+
+.me__name {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.me__mail {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.me__tier {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid rgba(242, 209, 141, 0.38);
+  border-radius: 99px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--gold);
+  background: rgba(242, 209, 141, 0.1);
+}
+
+.me__stats {
+  position: relative;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+
+.me__stats li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.me__k {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.me__v {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.me__v--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.me__v--gold {
+  font-weight: 500;
+  color: var(--gold);
+}
+
+/* 未读两行：公告 / 通知，各带一个数字和一个「›」 */
+.me__unread {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.me__un {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  transition: color 0.3s var(--ease), background 0.3s var(--ease);
+}
+
+.me__un:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.me__un-k {
+  flex: none;
+  letter-spacing: 0.08em;
+}
+
+.me__un-v {
+  flex: 1;
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.me__un-v b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--cyan);
+}
+
+.me__un-go {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--cyan);
+  opacity: 0.55;
+  transition: transform 0.3s var(--ease), opacity 0.3s var(--ease);
+}
+
+.me__un:hover .me__un-go {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+.me__acts {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.me__act {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.3s var(--ease), background 0.3s var(--ease);
+}
+
+.me__act:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.me__act--out:hover {
+  color: #ff9b9b;
+  background: rgba(255, 120, 120, 0.08);
+}
+
 @media (max-width: 860px) {
   .nav {
     display: none;
   }
-  .hdr__login {
+  .hdr__login,
+  .me {
     margin-left: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .me__btn,
+  .me__img,
+  .me__pop,
+  .me__act {
+    transition: none;
+  }
+
+  .me:hover .me__btn,
+  .me:focus-within .me__btn {
+    transform: none;
   }
 }
 </style>

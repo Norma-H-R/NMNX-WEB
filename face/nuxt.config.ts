@@ -6,6 +6,15 @@ export default defineNuxtConfig({
   // 全局设计变量与工具类，从原 Vite 工程的 src/style.css 平移过来
   css: ['~/assets/css/main.css'],
 
+  // 后端 API 地址（core 的 php artisan serve）。
+  // 部署/换环境时用环境变量覆盖，不用改代码：NUXT_PUBLIC_API_BASE=https://api.example.com
+  // （Nuxt 会把 NUXT_PUBLIC_API_BASE 自动映射到 runtimeConfig.public.apiBase）
+  runtimeConfig: {
+    public: {
+      apiBase: 'http://127.0.0.1:8000',
+    },
+  },
+
   app: {
     head: {
       htmlAttrs: { lang: 'zh-CN' },

@@ -100,7 +100,15 @@ onBeforeUnmount(() => {
   display: flex;
   /* 文字整体压到左下角：纵向贴底，横向见 .hero__inner */
   align-items: flex-end;
-  padding: 120px 0 clamp(72px, 9vh, 116px);
+  /* 上下边距统一 13vh（≈120px，和最初的 120px 顶距基本吻合，只是改成随视口走）。
+     下边距同时兼顾了给 SCROLL 指示器让位：它在 1080p 下约 140px，
+     .hero__cue 的顶边在距底 ~118px（bottom 34 + 竖线 54 + gap 12 + 文字≈18），净空约 22px。 */
+  padding: 13vh 0;
+  margin-bottom: 0;
+  /* 整个框的背景：由下向上渐黑，底部实心，把点阵下沿和与下一屏的接缝一起遮住。
+     注意这层画在点阵之上（canvas 是 z-index:0，本层 z-index:1），会真的把点阵盖掉；
+     要调遮罩范围只改最后那个 72% 的停靠点即可（调大 = 黑得更往上）。 */
+  background: linear-gradient(to top, var(--bg) 0%, var(--bg) 14%, rgba(6, 7, 13, 0) 72%);
 }
 
 /* 渐变磨砂黑。强度由 --hero-p（滚动进度 0→1，见脚本）驱动。
@@ -161,9 +169,17 @@ onBeforeUnmount(() => {
 
 .hero__title {
   margin-top: 26px;
+  /* 改用页脚字标那套子集字体（思源黑体 Heavy / 900）。
+     它只含 南·门·拈·星 四个字，正好是标题的全部字样，1.3 KB，
+     和页脚字标同一份文件、同一个 URL，不会多出一次请求。
+     ⚠️ 标题文案一旦改动，超出这四个字的字形会回退到雅黑，一行里会混进两种字重 ——
+        改文案就得像页脚那样重新取子集，否则字重会明显掉档。 */
+  font-family: 'NMNX Display', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB',
+    system-ui, -apple-system, sans-serif;
   font-size: clamp(56px, 11.5vw, 164px);
-  /* 700 就是微软雅黑的 Bold 档，再往上写数字也没用 */
-  font-weight: 700;
+  /* 900 对上面 @font-face 声明的字重。写 700 会去匹配雅黑 Bold（比 Heavy 轻一档），
+     这就是"再加粗"真正的解法：换字重更高的字面，而不是把数字往上堆。 */
+  font-weight: 900;
   line-height: 1;
   letter-spacing: 0.04em;
   /* 纯白平色。原来这里是 渐变填充 + text-stroke 描边 的"特效"，

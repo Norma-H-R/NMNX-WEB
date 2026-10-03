@@ -15,10 +15,36 @@ body,
   margin: 0;
 }
 
+/* 全站统一走"粗重黑体"栈：苹方 → HarmonyOS Sans → MiSans → 思源黑体 → 微软雅黑。
+   刻意不再把 Inter 放首位 —— Inter 只在 face 里自托管，admin 没有这个字体文件，
+   放首位只会让拉丁字符落到系统随便一个无衬线体上，和中文不是一套，反而更乱。
+   数字/时间戳这类需要等宽的场合，在组件里单独用 ui-monospace。 */
 body {
   font-family:
-    Inter, 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, -apple-system,
-    sans-serif;
+    'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Source Han Sans SC', 'Noto Sans SC',
+    'Microsoft YaHei', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* 表单控件不会自动继承字体，必须显式声明 ——
+   否则输入框会掉回浏览器默认字体（中文场景常常是宋体），和页面其它文字不是一套。
+   字重给 500：键入的内容要一眼看清，正文 400 就够了。
+   字号刻意不在这里设，交给 Naive UI 的组件变量管。 */
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-weight: 500;
+}
+
+/* 键盘可达性。
+   :focus-visible 只在"键盘 Tab 聚焦"时命中，鼠标点击不会出现焦点环，
+   所以加它不影响视觉。用 :where() 把特异性压成 0，
+   任何组件自带的 outline 都能随手覆盖掉它。
+   在这之前，侧栏菜单、页签、登录按钮这些手写按钮全都没有焦点态 ——
+   纯键盘用户在这个后台里会完全迷失位置。 */
+:where(button, a, [role='button'], [tabindex]):focus-visible {
+  outline: 2px solid rgba(110, 231, 255, 0.85);
+  outline-offset: 2px;
 }

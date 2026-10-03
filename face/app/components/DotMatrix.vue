@@ -72,13 +72,13 @@ const COLOR_RATE = 1.0
 const MOUSE_R = 0.3
 const MOUSE_K = 1.3
 
-// 粒子颜色 = 站点配色。
-// DOT_DIM 是整体压暗系数（1 = 原亮度，0.55 = 压暗 45%）。
-// ⚠️ 它只压"画面上的粒子颜色"：判定用的亮度来自流体贴图（FLUID_C1/C2），
-// 两者独立，所以调这个不会改变点阵的疏密，放心调。
-const DOT_DIM = 0.55
+// 粒子颜色 = 站点配色。青蓝点与白点各自独立调亮度。
+// ⚠️ 它们只改"画面上的粒子颜色"：判定用的亮度来自流体贴图（FLUID_C1/C2），
+// 两者独立，所以调这两个不会改变点阵的疏密，也不需要重标 THRESHOLD，放心调。
+const DOT_DIM = 0.8 // 青蓝点亮度系数（1 = --cyan 满亮度）
+const DOT_DIM_WHITE = 1.0 // 白点亮度系数（上限就是 1.0，白色再亮只能靠颜色以外的加光）
 const COL_ACCENT = [110 / 255, 231 / 255, 255 / 255].map((v) => v * DOT_DIM) // --cyan
-const COL_WHITE = [1.0, 1.0, 1.0].map((v) => v * DOT_DIM)
+const COL_WHITE = [1.0, 1.0, 1.0].map((v) => v * DOT_DIM_WHITE)
 const COL_BG = [6 / 255, 7 / 255, 13 / 255] // --bg
 
 const FLUID_SCALE = 0.5 // 流体那趟再降半分辨率渲染（流体很平滑，肉眼无差，省 4 倍）

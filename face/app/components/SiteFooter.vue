@@ -60,7 +60,7 @@ const SPEED = 1.1 // 切片图案的演化速度
 // 青底上白与红都最跳，黑的字压中间，三色互不打架。
 // （想要更暖/更粉的红，只改 SPLIT_RED 一处即可。）
 const SPLIT_WHITE = '#ffffff'
-const SPLIT_RED = '#ff2d2d'
+const SPLIT_RED = '#ff1a1a' // 亮红
 
 // 爆发调度：多久爆发一次、持续多久
 const BURST_MIN = 0.26

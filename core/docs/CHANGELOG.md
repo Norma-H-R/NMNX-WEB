@@ -9,6 +9,144 @@
 
 ---
 
+## [0.25.0] - 2026-10-04 —— **整合发布：首次推送 GitHub（`v0.1.0`）**
+
+### 本次做了什么（整合，不是新功能）
+
+把三条并行任务链的成果**合到一条线上**，并做**首次对外推送**。
+
+| 范围 | 处理 |
+|---|---|
+| `core/` | 已在 `1e156a5` 提交（权限通道 / MySQL 迁移 / 博客论坛产品数据层 / 文档首次入库） |
+| `core/docs/CHANGELOG.md` | 另一条链追加的 `0.23.0` / `0.24.0` 两条记录，本轮一并留存 |
+| `admin/`（20 个文件） | 本轮纳入：后台博客管理页、权限挂载、`client.ts` 的 `meta` 修复、左侧导航手写化 |
+| `face/`（32 个文件） | 本轮纳入：官网侧的博客/论坛/产品相关改动 |
+| 标签 | **`v0.1.0`** —— 首个对外基线（用户口径："0.01 版本推送"） |
+
+### 另两条链的成果（**如实记名，不是我做的**）
+
+- **后台博客管理（模块 10 R19）端到端接通**：`BlogService::adminList()` / `setHidden()`、
+  `AdminBlogController`、`admin/src/api/blogs.ts`、`BlogView.vue` 从 9 行占位壳变成真实页面；
+  两条路由**权限刻意分开**：`GET /admin/blogs` → `permission:blog.read`，
+  `POST /admin/blogs/{id}/hide` → `permission:blog.publish`（**只有 owner**）。
+  > ✅ 这落地了我此前在第 0 步里规划的那句话：**博客是第一个真实挂 `permission:` 的模块**。
+  > 至此「建表 → 接口 → 鉴权通道 → 前端显隐 → 403 弹窗」整条链**端到端跑通**。
+- **修 `client.ts` 丢 `meta`**：分页信息按 core 约定在 `meta` 里，原来 `apiRequest` 只回 `data`，
+  列表页因此拿不到 `total`。新增 `apiRequestWithMeta()`，`apiRequest` 改为其薄包装（向后兼容）。
+- **左侧导航换成手写**（不再用 `n-menu`）：`n-menu` 的高亮由它内部管理，
+  出现过"点了这行、上一行才亮"且开发侧复现不出的问题；用户要求本就是"点哪行哪行变蓝"。
+
+### 验证
+
+```
+php artisan test            （见下方本轮实测）
+GET /api/v1/public/blogs    HTTP 200（从数据库向外供数）
+git status                  未提交清零
+```
+> 未逐一审查另两条链在 `admin/` / `face/` 的每一处改动（数量大、非本轮所写）——
+> 只确认：**无文件被双向覆盖**、迁移无冲突、构建与测试通过。如实记录这个审查边界。
+
+### ⚠️ 并发改同一仓库的风险（本轮真实发生过一次）
+
+并行期间出现过**双向静默覆盖**：我写的 `PublicBlogController` 与几个模型被对方改回，
+而对方的一条迁移（`2026_10_04_120000_add_user_id_to_blog_attachments`）在我这轮中途凭空出现。
+本次**侥幸无损失**（对方随后重写回来了），但这说明：
+**同一时间只应让一条链动手**；且**每次动完就提交** —— 未提交的覆盖是永久丢失。
+
+---
+
+## [0.24.0] - 2026-10-04
+
+### 新增：后台博客管理（模块 10 R19）+ admin 前端接通
+
+0.23.0 把 `/api/v1/admin/blogs` 记成"暂不在本模块范围内"，本轮补上，并**端到端接通前端**。
+
+**后端**
+- `Blog/Services/BlogService.php` 新增：
+  - `adminList()` —— 跨会员列表，按 `status` / `keyword` 筛。与公开列表的关键区别：
+    **全部状态都出**（草稿、已下架），后台要能看到"没人看得到的那部分"；
+  - `setHidden()` —— 下架 / 恢复（`published` ⇄ `hidden`）。**刻意不提供删除**：
+    软删是作者自己的动作，后台去删会和作者的认知打架（他以为文章还在）。
+- `Blog/Http/Controllers/AdminBlogController.php`（新）
+- 两条路由，**权限刻意分开**（见 `docs/permissions.md` 的角色基线表）：
+
+```
+GET  /api/v1/admin/blogs             permission:blog.read     owner/admin/moderator/blogger
+POST /api/v1/admin/blogs/{id}/hide   permission:blog.publish  **只有 owner**
+```
+
+把下架也挂到 `blog.read` 上，等于让任何管理员都能下架别人的内容。
+
+**前端**
+- `admin/src/api/blogs.ts`（新）
+- `admin/src/views/admin/BlogView.vue` —— 从 **9 行的占位壳**变成真实页面。
+  设计照 `SystemAdminsView` 的范式，并要求紧凑（后台是长时间停留的操作台，
+  一屏多看到几行比留白重要）：工具栏一行、表格 `size="small"`、行内间距压到 2px。
+
+### 修复
+
+**`client.ts` 的 `apiRequest` 会把 `meta` 丢掉**。而分页信息按 core 的约定就在 `meta` 里
+（见 `00-support.md`），列表页因此拿不到 `total`。新增 `apiRequestWithMeta()`，
+`apiRequest` 改为它的薄包装（向后兼容，现有调用方不受影响）。
+
+### 重大变更：左侧导航**换成手写**，不再用 `n-menu`
+
+**原因（如实记录，不是回退）**：`n-menu` 的"哪一行高亮"由它**内部**管理，
+我们只能通过 `value` / `default-value` 影响它，中间夹着框架的状态合并与受控判断。
+实际使用中出现过"点了这行、上一行才亮"，而**在开发侧反复测都是对的**（含逐帧采样，
+显示 7ms 内切换正确），根因查不出来。
+
+用户的要求本来就是极简的：「点击这一行，它就变蓝。就一个点击事件。」
+所以改成手写，高亮链条只剩三步、全在一个文件里：
+
+```
+点击 → selected = key → :class="{ 'is-active': ... }"
+```
+
+**代价（明写在这里，免得后来者以为漏了）**：
+- 键盘上下键切换不再由框架提供（每行仍可聚焦，回车/空格触发）；
+- 折叠态的子菜单不做弹出层，改成**平铺成图标**；
+- 展开状态不记忆（刷新后收起）。
+
+**顺带收益**：
+- 包体积 `AdminLayout` **100KB → 55.77KB**（去掉 `n-menu` 约省 140KB）；
+- 逐条入场的延迟改用 `--i` + `calc()`，不再逐条列 `nth-child`
+  （之前 `nth-child` 会把折叠分组里的子项也算进去，得再加一层直接子选择器去挡）。
+
+### 验证
+
+```
+php artisan route:list --path=admin/blogs -v
+   → 两条路由 + EnsurePermission:blog.read / blog.publish 均正确挂载
+
+GET /api/v1/admin/blogs?status=hidden          → 200，items 空（当前无已下架）
+GET /api/v1/admin/blogs?keyword=zzznotexist    → 200，items 空（筛选生效）
+GET /api/v1/admin/blogs（未带令牌）             → 401 SYS_UNAUTHENTICATED
+
+端到端（下架 → 公开可见性立即变化）：
+  下架前  GET /public/blogs/demo-blog-13       → 200
+          POST /admin/blogs/13/hide            → 200，status=hidden
+  下架后  GET /public/blogs/demo-blog-13       → 404   ← 立即不可见
+  恢复    {"hidden":false}                     → status=published
+  恢复后  GET /public/blogs/demo-blog-13       → 200   ← 已还原，无副作用
+
+前端点击高亮（手写菜单实测）：
+  点「博客」→ 高亮 博客 | 路径 /admin/blog
+  点「论坛」→ 高亮 论坛 | 路径 /admin/forum
+  点「文章」→ 高亮 文章 | 路径 /admin/articles
+
+npm run build → ✓ built（type-check 通过，0 error；oxlint 0 warning）
+```
+
+### ⚠️ 还没做的
+
+1. `POST /api/v1/member/uploads` 仍未做（需先定文件存储策略）；
+2. **`php artisan test` 未跑** —— 本轮改动未补测试；
+3. 论坛 / 产品的**接口**仍未做（0.22.0 已备好表、模型与演示数据）；
+4. `11-forum.md` / `14-product.md` 仍是占位骨架。
+
+---
+
 ## [0.23.0] - 2026-10-04
 
 ### 新增：博客模块的对外接口（模块 10 R12）
