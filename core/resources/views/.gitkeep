@@ -1,0 +1,6 @@
+# 纯 API 后端，这里没有任何视图文件。
+#
+# 但目录必须存在：Laravel 的 config/view.php 把它注册为视图查找路径，
+# 一旦目录缺失，`php artisan view:cache` / `php artisan optimize` 会抛
+# Symfony\Component\Finder\Exception\DirectoryNotFoundException 直接失败。
+# 空目录 git 不跟踪，所以用这个文件把目录钉住。

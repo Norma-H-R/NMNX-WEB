@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use App\Modules\Auth\Models\Admin;
 
 return [
 
@@ -42,6 +43,39 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
+
+        /*
+         * 后台管理者守卫（/api/v1/admin/* 用 `auth:admin`）。
+         * 驱动是 sanctum（Bearer 令牌），**不是** Cookie 会话。
+         *
+         * ⚠️ provider 这一行是**安全防线的主体**，不是装饰：
+         *    Sanctum 的 Guard 在 isValidAccessToken() 里调 hasValidProvider()，
+         *    判定 `$tokenable instanceof config('auth.providers.<provider>.model')`
+         *    （vendor/laravel/sanctum/src/Guard.php:130,145-153）。
+         *    而 **provider 为 null 时它直接返回 true，任何令牌都放行** ——
+         *    Sanctum 自动注册的那个 `sanctum` 守卫正是 provider = null。
+         *
+         *    也就是说：`auth:sanctum` 下会员令牌可以读 admin 接口；
+         *    换成 `auth:admin`（provider = admins）之后才真正隔离。
+         *    回归测试在 tests/Feature/Auth/GuardIsolationTest.php —— 别删。
+         */
+        'admin' => [
+            'driver' => 'sanctum',
+            'provider' => 'admins',
+        ],
+
+        /*
+         * 前台会员守卫（/api/v1/member/* 用 `auth:member`）。
+         * 会员就是 users 总表（App\Models\User），所以 provider 复用 `users`。
+         *
+         * 与管理者的隔离靠 Sanctum 的 hasValidProvider()：
+         *   admin 令牌的 tokenable 是 Admin、member 令牌的是 User，两者 instanceof 互不匹配
+         *   （vendor/laravel/sanctum/src/Guard.php:145-153）。回归测试别删。
+         */
+        'member' => [
+            'driver' => 'sanctum',
+            'provider' => 'users',
+        ],
     ],
 
     /*
@@ -65,6 +99,16 @@ return [
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', User::class),
+        ],
+
+        /*
+         * 后台管理者。与上面的 `users`（前台会员）是**两张表、两个模型**（需求 D1）。
+         * 注意这里的 `env('AUTH_MODEL', ...)` 只作用于会员，管理员**不允许**用环境变量覆盖 ——
+         * 管理员表是整个后台的入口凭据，配置漂移的代价太高。
+         */
+        'admins' => [
+            'driver' => 'eloquent',
+            'model' => Admin::class,
         ],
 
         // 'users' => [
